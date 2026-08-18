@@ -1,0 +1,30 @@
+# Copy file này thành dev.tfvars rồi điền giá trị.
+# dev.tfvars KHÔNG được commit (đã gitignore).
+
+aws_region = "ap-southeast-1"
+app_name   = "recon"
+env        = "dev"
+
+# ===== CHỖ DÁN CREDENTIAL GCP =====
+# 1. Tạo project trên https://console.cloud.google.com
+# 2. Dán project ID vào đây:
+gcp_project_id = "YOUR_GCP_PROJECT_ID"
+
+# 3. Tạo Document AI Form Parser processor trong Console:
+#    https://console.cloud.google.com/ai/document-ai/processor-library
+#    → Chọn "Form Parser" → tạo → dán processor ID vào đây:
+gcp_docai_processor_id = "YOUR_PROCESSOR_ID"
+
+gcp_docai_location = "us"
+
+# Đường dẫn file credentials JSON (SA key) nếu không dùng gcloud CLI.
+# Nếu đã chạy "gcloud auth application-default login" thì để trống "".
+gcp_credentials_file = ""
+
+# ===== CHỖ DÁN GEMINI API KEY =====
+# Vào https://aistudio.google.com/apikey → Create API key → dán vào đây:
+gemini_api_key = "YOUR_GEMINI_API_KEY"
+
+# ===== CHỖ DÁN CREDENTIAL AWS =====
+# KHÔNG dán ở đây — chạy lệnh: aws configure
+# (nhập AWS Access Key ID + Secret Access Key + region ap-southeast-1)

@@ -1,0 +1,36 @@
+# opencode config cá nhân
+opencode.json
+AGENTS.md
+
+# Credential — KHÔNG BAO GIỜ commit
+.env
+*/.env
+evaluation/results/
+
+# Dataset đánh giá — dữ liệu bên thứ ba (MC-OCR) và chứng từ thật của doanh
+# nghiệp, không phân phối lại qua repo. Nguồn tải: evaluation/README.md
+evaluation/dataset/documents/*
+evaluation/dataset/ground_truth/*
+!evaluation/dataset/**/.gitkeep
+
+# Service account key Google (nên để NGOÀI repo, đây chỉ là lưới an toàn)
+*sa-key*.json
+*service-account*.json
+*credentials*.json
+gcp-key*.json
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Terraform (bin/ = binary tải về, không commit; .terraform.lock.hcl thì CÓ commit)
+infra/bin/
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars
+!infra/dev.tfvars.example
+infra/artifacts/
+infra/build/

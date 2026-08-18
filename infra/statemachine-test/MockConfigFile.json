@@ -1,0 +1,99 @@
+{
+  "StateMachines": {
+    "ProcessSM": {
+      "TestCases": {
+        "ThanhCong": {
+          "Ocr": "OcrOk",
+          "Extract": "ExtractOk",
+          "Validate": "ValidateOk",
+          "Reconcile": "ReconcileOk"
+        },
+        "DocLoiOcr": {
+          "Ocr": "OcrThrow",
+          "MarkOcrFailed": "MarkFailedOk",
+          "Reconcile": "ReconcileOk"
+        },
+        "ReconcileLoi": {
+          "Ocr": "OcrOk",
+          "Extract": "ExtractOk",
+          "Validate": "ValidateOk",
+          "Reconcile": "ReconcileThrow",
+          "MarkRunFailed": "MarkRunFailedOk"
+        }
+      }
+    }
+  },
+  "MockedResponses": {
+    "OcrOk": {
+      "0": {
+        "Return": {
+          "project_id": "prj-1",
+          "run_id": "run-1",
+          "document_id": "doc-a",
+          "s3_key": "projects/prj-1/uploads/doc-a.pdf",
+          "ocr_s3_key": "projects/prj-1/ocr/doc-a.json"
+        }
+      }
+    },
+    "OcrThrow": {
+      "0": {
+        "Throw": {
+          "Error": "ValueError",
+          "Cause": "Khong doc duoc PDF"
+        }
+      }
+    },
+    "ExtractOk": {
+      "0": {
+        "Return": {
+          "project_id": "prj-1",
+          "run_id": "run-1",
+          "document_id": "doc-a",
+          "extraction_s3_key": "projects/prj-1/extraction/doc-a.json"
+        }
+      }
+    },
+    "ValidateOk": {
+      "0": {
+        "Return": {
+          "document_id": "doc-a",
+          "status": "VALIDATED"
+        }
+      }
+    },
+    "MarkFailedOk": {
+      "0": {
+        "Return": {
+          "document_id": "doc-a",
+          "status": "FAILED",
+          "error": "ValueError: Khong doc duoc PDF"
+        }
+      }
+    },
+    "ReconcileOk": {
+      "0": {
+        "Return": {
+          "reconciliation_id": "rec-1",
+          "discrepancy_count": 0
+        }
+      }
+    },
+    "ReconcileThrow": {
+      "0": {
+        "Throw": {
+          "Error": "RuntimeError",
+          "Cause": "DynamoDB loi"
+        }
+      }
+    },
+    "MarkRunFailedOk": {
+      "0": {
+        "Return": {
+          "project_id": "prj-1",
+          "run_id": "run-1",
+          "status": "FAILED"
+        }
+      }
+    }
+  }
+}

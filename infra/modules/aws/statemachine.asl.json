@@ -1,0 +1,208 @@
+{
+  "Comment": "Xử lý document của một project: Map(OCR -> Extract -> Validate) rồi đối chiếu",
+  "StartAt": "ProcessDocuments",
+  "States": {
+    "ProcessDocuments": {
+      "Type": "Map",
+      "ItemsPath": "$.documents",
+      "MaxConcurrency": 3,
+      "ItemSelector": {
+        "project_id.$": "$.project_id",
+        "run_id.$": "$.run_id",
+        "document_id.$": "$$.Map.Item.Value.document_id",
+        "s3_key.$": "$$.Map.Item.Value.s3_key"
+      },
+      "ResultPath": "$.results",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "Ocr",
+        "States": {
+          "Ocr": {
+            "Type": "Task",
+            "Resource": "${ocr_lambda_arn}",
+            "TimeoutSeconds": 600,
+            "Retry": [
+              {
+                "ErrorEquals": ["RateLimitError"],
+                "IntervalSeconds": 5,
+                "MaxAttempts": 4,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              },
+              {
+                "ErrorEquals": [
+                  "Lambda.TooManyRequestsException",
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "MarkOcrFailed"
+              }
+            ],
+            "Next": "Extract"
+          },
+          "Extract": {
+            "Type": "Task",
+            "Resource": "${extract_lambda_arn}",
+            "TimeoutSeconds": 300,
+            "Retry": [
+              {
+                "ErrorEquals": ["RateLimitError"],
+                "IntervalSeconds": 5,
+                "MaxAttempts": 4,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              },
+              {
+                "ErrorEquals": [
+                  "Lambda.TooManyRequestsException",
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "MarkExtractFailed"
+              }
+            ],
+            "Next": "Validate"
+          },
+          "Validate": {
+            "Type": "Task",
+            "Resource": "${validate_lambda_arn}",
+            "TimeoutSeconds": 60,
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.TooManyRequestsException",
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "MarkValidateFailed"
+              }
+            ],
+            "End": true
+          },
+          "MarkOcrFailed": {
+            "Type": "Task",
+            "Resource": "${mark_failed_lambda_arn}",
+            "Parameters": {
+              "project_id.$": "$.project_id",
+              "document_id.$": "$.document_id",
+              "step": "ocr",
+              "error.$": "$.error"
+            },
+            "End": true
+          },
+          "MarkExtractFailed": {
+            "Type": "Task",
+            "Resource": "${mark_failed_lambda_arn}",
+            "Parameters": {
+              "project_id.$": "$.project_id",
+              "document_id.$": "$.document_id",
+              "step": "extract",
+              "error.$": "$.error"
+            },
+            "End": true
+          },
+          "MarkValidateFailed": {
+            "Type": "Task",
+            "Resource": "${mark_failed_lambda_arn}",
+            "Parameters": {
+              "project_id.$": "$.project_id",
+              "document_id.$": "$.document_id",
+              "step": "validate",
+              "error.$": "$.error"
+            },
+            "End": true
+          }
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkRunFailed"
+        }
+      ],
+      "Next": "Reconcile"
+    },
+    "Reconcile": {
+      "Type": "Task",
+      "Resource": "${reconcile_lambda_arn}",
+      "TimeoutSeconds": 120,
+      "Parameters": {
+        "project_id.$": "$.project_id",
+        "run_id.$": "$.run_id"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.TooManyRequestsException",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkRunFailed"
+        }
+      ],
+      "End": true
+    },
+    "MarkRunFailed": {
+      "Type": "Task",
+      "Resource": "${mark_run_failed_lambda_arn}",
+      "Parameters": {
+        "project_id.$": "$.project_id",
+        "run_id.$": "$.run_id",
+        "error.$": "$.error"
+      },
+      "Next": "RunFailed"
+    },
+    "RunFailed": {
+      "Type": "Fail",
+      "Error": "ProcessingFailed",
+      "Cause": "Run xử lý document thất bại"
+    }
+  }
+}
