@@ -14,7 +14,6 @@ Muốn verify hành vi thật của ASL thì dùng infra/statemachine-test/.
 import json
 import pathlib
 import threading
-import time
 import traceback
 
 import workers.extract
@@ -125,14 +124,10 @@ def build_plan(asl: dict | None = None) -> dict:
     }
 
 
-def run_local(payload: dict, slow: float = 0.0, plan: dict | None = None) -> None:
+def run_local(payload: dict, plan: dict | None = None) -> None:
     plan = plan or build_plan()
     project_id = payload["project_id"]
     run_id = payload.get("run_id")
-
-    def pause():
-        if slow:
-            time.sleep(slow)
 
     try:
         for document in payload.get("documents", []):
@@ -143,7 +138,6 @@ def run_local(payload: dict, slow: float = 0.0, plan: dict | None = None) -> Non
                 "s3_key": document["s3_key"],
             }
             for state_name in plan["per_document"]:
-                pause()
                 try:
                     result = STATE_TO_WORKER[state_name](event, None)
                     if isinstance(result, dict):
@@ -167,7 +161,6 @@ def run_local(payload: dict, slow: float = 0.0, plan: dict | None = None) -> Non
                     break  # document này dừng, các document khác vẫn chạy tiếp
 
         for state_name in plan["after_map"]:
-            pause()
             STATE_TO_WORKER[state_name]({"project_id": project_id, "run_id": run_id}, None)
 
     except Exception as exc:
@@ -184,7 +177,7 @@ def run_local(payload: dict, slow: float = 0.0, plan: dict | None = None) -> Non
             )
 
 
-def install(slow: float = 0.0) -> dict:
+def install() -> dict:
     """Thay StartExecution bằng orchestrator cục bộ chạy trong thread nền."""
     import api.process as process_module
 
@@ -192,7 +185,7 @@ def install(slow: float = 0.0) -> dict:
 
     def start_execution(name: str, payload: dict) -> str:
         thread = threading.Thread(
-            target=run_local, args=(payload, slow, plan), daemon=True, name=f"run-{name}"
+            target=run_local, args=(payload, plan), daemon=True, name=f"run-{name}"
         )
         thread.start()
         return f"arn:aws:states:local:000000000000:execution:devserver:{name}"

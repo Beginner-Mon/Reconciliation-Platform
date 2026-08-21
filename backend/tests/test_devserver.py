@@ -5,10 +5,11 @@ tới dev chạy một đằng cloud chạy một nẻo. Test này bắt lỗi �
 """
 
 import json
+import pathlib
 
 import pytest
 
-from devserver import bootstrap, fake_ai
+from devserver import bootstrap
 from devserver.pipeline import STATE_TO_WORKER, build_plan, load_asl
 
 
@@ -75,39 +76,6 @@ def test_documents_co_du_hai_gsi():
     }
 
 
-def test_ai_gia_sinh_bo_chung_tu_khop_nhau():
-    from core import run_crosscheck, validate_document
-
-    documents = []
-    for index, (name, content) in enumerate(fake_ai.sample_files().items()):
-        extracted = fake_ai.fake_extract(fake_ai.fake_ocr(content))
-        data = {**extracted["data"], "document_type": extracted["document_type"]}
-        assert validate_document(data)["valid"], f"{name} không qua validate"
-        documents.append({"document_id": f"doc-{index}", "data": data})
-
-    assert {d["data"]["document_type"] for d in documents} == {
-        "purchase_order",
-        "invoice",
-        "acceptance_record",
-    }
-
-    result = run_crosscheck(documents)
-    rules = {d["rule_id"] for d in result["discrepancies"]}
-    assert "line_item_unit_price" in rules
-    assert "invoiced_over_accepted" in rules, "thiếu mâu thuẫn 3 chiều để demo"
-    assert len(result["groups"]) == 1, "3 chứng từ phải cùng một giao dịch"
-
-
-def test_ai_gia_nem_loi_theo_tu_khoa():
-    with pytest.raises(RuntimeError):
-        fake_ai.fake_ocr(b"__LOI__ file hong")
-
-
-def test_ai_gia_tat_dinh():
-    content = b"noi dung khong co tu khoa nao"
-    assert fake_ai.detect_type(content) == fake_ai.detect_type(content)
-
-
 def test_event_dung_hinh_dang_ma_api_handler_mong_doi():
     from api.handler import lambda_handler
 
@@ -119,3 +87,57 @@ def test_event_dung_hinh_dang_ma_api_handler_mong_doi():
     result = lambda_handler(event, None)
     assert result["statusCode"] == 404
     assert json.loads(result["body"])["error"]
+
+
+def test_khong_con_duong_nao_chay_bang_ai_gia():
+    """Dev server chỉ được có MỘT chế độ: AI thật.
+
+    Dữ liệu mẫu nhìn y hệt lỗi hệ thống. Test này chặn việc ai đó thêm lại một
+    chế độ dự phòng "cho tiện" rồi quên mất mình đang xem dữ liệu bịa.
+    """
+    import devserver.__main__ as entry
+
+    assert not hasattr(entry, "load_real_ai_env")
+    for name in ("fake_ai", "replay_ocr", "minipdf", "seed"):
+        assert not (pathlib.Path(entry.__file__).parent / f"{name}.py").exists(),             f"devserver/{name}.py phải bị xoá"
+
+
+def test_thieu_credential_thi_thoat_chu_khong_chay_tiep(monkeypatch):
+    import devserver.__main__ as entry
+
+    for name in ("DOCAI_PROJECT", "DOCAI_OCR_PROCESSOR_ID", "GEMINI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(SystemExit) as exc:
+        entry.setup_ai("dococr")
+    assert exc.value.code == 2
+
+
+def test_moi_processor_deu_co_don_gia_di_kem():
+    """Processor và đơn giá phải nằm chung một chỗ.
+
+    Tách ra là chỗ đã sai một lần: ước tính chi phí lệch 20 lần vì lấy đơn giá
+    Form Parser cho Enterprise Document OCR.
+    """
+    import devserver.__main__ as entry
+
+    for name, spec in entry.PROCESSORS.items():
+        assert spec["env"] and spec["label"]
+        assert float(spec["usd_per_page"]) > 0, name
+    assert float(entry.PROCESSORS["dococr"]["usd_per_page"]) == 0.0015
+    assert float(entry.PROCESSORS["formparser"]["usd_per_page"]) == 0.030
+
+
+def test_setup_ai_dat_dung_processor_va_don_gia(monkeypatch):
+    import devserver.__main__ as entry
+
+    monkeypatch.setenv("DOCAI_PROJECT", "du-an-gia-lap")
+    monkeypatch.setenv("DOCAI_OCR_PROCESSOR_ID", "proc-ocr-123")
+    monkeypatch.setenv("GEMINI_API_KEY", "khoa-gia-lap")
+    monkeypatch.delenv("DOCAI_PROCESSOR_ID", raising=False)
+
+    entry.setup_ai("dococr")
+    import os
+
+    assert os.environ["DOCAI_PROCESSOR_ID"] == "proc-ocr-123"
+    assert os.environ["DOCAI_USD_PER_PAGE"] == "0.0015"
+    assert os.environ["DOCAI_PROCESSOR_LABEL"] == "documentai-enterprise-document-ocr"

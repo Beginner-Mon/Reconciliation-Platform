@@ -111,3 +111,42 @@ def test_validate_bad_currency():
     result = validate_document(data)
     assert result["valid"] is False
     assert any("currency" in e for e in result["rule_errors"])
+
+
+# --- Loại "unknown": chứng từ không khớp loại nào đã định nghĩa -------------
+
+
+def test_unknown_qua_duoc_validate_du_gan_nhu_trong():
+    """Chỉ cần document_type là đủ. Đây là chỗ chứa thứ chưa hiểu rõ."""
+    result = validate_document({"document_type": "unknown"})
+    assert result["valid"], result["schema_errors"] + result["rule_errors"]
+
+
+def test_unknown_nhan_duoc_so_hieu_chung_tu_that():
+    """Số hiệu thật của chứng từ vận tải, không phải dạng PO-2026-001."""
+    for so_hieu in ("ASC0483717", "SG2514576-6501066247", "HASLS21250901217-6501060532"):
+        result = validate_document(
+            {"document_type": "unknown", "doc_number": so_hieu, "doc_date": "2025-10-17"}
+        )
+        assert result["valid"], f"{so_hieu}: {result['schema_errors']}"
+
+
+def test_unknown_van_chan_ngay_tuong_lai():
+    """Nới lỏng trường, KHÔNG nới lỏng luật chung."""
+    result = validate_document({"document_type": "unknown", "doc_date": "2099-01-01"})
+    assert not result["valid"]
+    assert any("tương lai" in e for e in result["rule_errors"])
+
+
+def test_unknown_khong_lam_ba_loai_cu_nong_theo():
+    """Thêm loại dự phòng không được biến hóa đơn thiếu trường thành hợp lệ."""
+    result = validate_document({"document_type": "invoice"})
+    assert not result["valid"]
+    assert result["schema_errors"]
+
+
+def test_document_type_bia_van_bi_tu_choi():
+    """'unknown' là một loại CÓ THẬT trong registry, không phải cái sọt rác."""
+    result = validate_document({"document_type": "bill_of_lading"})
+    assert not result["valid"]
+    assert any("không được hỗ trợ" in e for e in result["schema_errors"])

@@ -1,3 +1,4 @@
+import { Check, RotateCw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, ApiError, uploadFile } from "../api";
@@ -5,7 +6,6 @@ import { DiscrepancyCard } from "../components/DiscrepancyCard";
 import { DocumentSidebar } from "../components/DocumentSidebar";
 import { DocumentViewer } from "../components/DocumentViewer";
 import { EditPanel } from "../components/EditPanel";
-import { FakeAiBanner } from "../components/FakeAiBanner";
 import { OcrPanel } from "../components/OcrPanel";
 import { WorkflowView } from "../components/WorkflowView";
 import { SEVERITY_ORDER } from "../format";
@@ -152,7 +152,6 @@ export function ProjectDetail() {
 
   return (
     <div className="flex h-screen flex-col">
-      <FakeAiBanner />
 
       <div className="flex min-h-0 flex-1">
         <DocumentSidebar
@@ -241,15 +240,15 @@ export function ProjectDetail() {
                               )
                             }
                             disabled={busy || active}
-                            className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            className="flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                           >
-                            ↻ Đối soát lại
+                            <RotateCw size={14} /> Đối soát lại
                           </button>
                         </div>
 
                         {sorted.length === 0 ? (
-                          <p className="py-12 text-center text-emerald-700">
-                            ✓ Không tìm thấy mâu thuẫn nào giữa các chứng từ.
+                          <p className="flex items-center justify-center gap-2 py-12 text-center text-emerald-700"><Check size={18} />
+                            Không tìm thấy mâu thuẫn nào giữa các chứng từ.
                           </p>
                         ) : (
                           <div className="space-y-3">
@@ -276,7 +275,11 @@ export function ProjectDetail() {
                                   : "bg-red-100 text-red-800"
                               }`}
                             >
-                              {reconciliation.status === "APPROVED" ? "✓ Đã duyệt" : "✕ Đã từ chối"}
+                              {reconciliation.status === "APPROVED" ? (
+                                <span className="flex items-center gap-1"><Check size={14} /> Đã duyệt</span>
+                              ) : (
+                                <span className="flex items-center gap-1"><X size={14} /> Đã từ chối</span>
+                              )}
                             </span>
                           ) : (
                             <>

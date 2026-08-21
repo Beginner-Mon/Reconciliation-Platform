@@ -20,14 +20,6 @@ PREFLIGHT_HEADERS = {
     "Access-Control-Max-Age": "600",
 }
 
-# Route CHỈ CÓ ở dev server, cố ý không nằm trong api/handler.py.
-# Frontend gọi thử; nhận 404 nghĩa là đang chạy production thật.
-DEV_META_PATH = "/__dev__"
-
-# __main__.py đặt lại giá trị này lúc khởi động.
-DEV_META = {"fake_ai": True, "latency": 0.0}
-
-
 class DevHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     quiet = False
@@ -53,14 +45,6 @@ class DevHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self) -> None:
         path = self.path.split("?", 1)[0]
-
-        if path == DEV_META_PATH:
-            self._send(
-                200,
-                {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
-                json.dumps(DEV_META, ensure_ascii=False),
-            )
-            return
 
         event = {
             "requestContext": {"http": {"method": self.command}},

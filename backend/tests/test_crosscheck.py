@@ -250,3 +250,39 @@ def test_group_documents_tach_theo_po_number():
     assert unlinked == []
     assert {g.key for g in groups} == {"PO-2026-001", "PO-2026-002"}
     assert all(len(g.documents) == 2 for g in groups)
+
+
+# --- Chứng từ chưa phân loại không được kéo vào đối chiếu -------------------
+
+
+def _unknown(document_id: str, **fields) -> dict:
+    return {"document_id": document_id, "data": {"document_type": "unknown", **fields}}
+
+
+def test_hai_chung_tu_unknown_khong_bi_dem_so_tien_voi_nhau():
+    """Lỗi bắt được khi chạy thật trên 6 chứng từ vận tải biển.
+
+    AgreeRule/NumericRule lọc theo TRƯỜNG chứ không theo LOẠI, nên hai chứng từ
+    của hai lô hàng, hai khách hàng khác nhau bị báo "lệch tiền 43 triệu" chỉ
+    vì cùng có trường total_amount.
+    """
+    result = run_crosscheck([
+        _unknown("doc-a", currency="VND", total_amount=43_350_000),
+        _unknown("doc-b", currency="USD", total_amount=104_760),
+    ])
+    assert result["discrepancy_count"] == 0, result["discrepancies"]
+
+
+def test_unknown_bi_bo_qua_nhung_phai_bao_ra_chu_khong_im_lang():
+    result = run_crosscheck([_unknown("doc-a", total_amount=1_000)])
+    assert "doc-a" not in result["checked_document_ids"]
+    skipped = {s["document_id"]: s["reason"] for s in result["skipped_documents"]}
+    assert "chưa phân loại" in skipped["doc-a"]
+
+
+def test_unknown_khong_lam_hong_doi_chieu_cua_cac_loai_that():
+    """Thêm một chứng từ lạ vào project không được đổi kết quả đối chiếu."""
+    that = [po(), invoice()]
+    truoc = run_crosscheck(that)
+    sau = run_crosscheck(that + [_unknown("doc-la", currency="USD", total_amount=7)])
+    assert sau["discrepancy_count"] == truoc["discrepancy_count"]

@@ -42,8 +42,8 @@ backend/
   workers/   ocr, extract, validate, reconcile, mark_failed + steps.py (begin/finish/fail)
   core/      validate.py (luật TRONG 1 doc) | rules.py + crosscheck.py (luật GIỮA nhiều doc)
   common/    s3, dynamodb, stepfunctions, ai_clients, audit, errors, ids
-  schemas/   purchase_order, invoice, acceptance_record, registry.py
-  devserver/ chạy backend ở localhost (moto server + AI giả) — KHÔNG vào Lambda zip
+  schemas/   purchase_order, invoice, acceptance_record, unknown, registry.py
+  devserver/ chạy backend ở localhost (moto server, AI THẬT) — KHÔNG vào Lambda zip
 frontend/    React 19 + TS + Vite + Tailwind v4; 2 màn hình, gọi API dev server
   tests/     conftest.py (moto), test_validate, test_crosscheck, test_api, test_devserver
 docs/        architecture.md, data-model.md, schemas.md, iac-plan.md
@@ -103,10 +103,32 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 - Bucket S3 **phải khai CORS** (`aws_s3_bucket_cors_configuration` +
   `devserver/bootstrap.py CORS_RULES`) vì frontend upload thẳng lên S3. Thiếu
   thì `curl` vẫn chạy nhưng trình duyệt bị chặn — test cũ không bắt được.
-- `devserver` mặc định dùng **AI giả**: trả dữ liệu mẫu cố định, KHÔNG đọc file
-  thật. Nhìn giống lỗi hệ thống nên UI phải hiện băng cảnh báo — frontend biết
-  qua `GET /__dev__`, route **chỉ dev server có** (production trả 404). Muốn kết
-  quả thật thì `devserver --real-ai` (tốn tiền).
+- `devserver` **KHÔNG còn chế độ AI giả** (đã gỡ `fake_ai.py`, `replay_ocr.py`,
+  `minipdf.py`, `seed.py`, route `/__dev__`, `FakeAiBanner`). AWS thì giả lập,
+  AI thì luôn thật và luôn tốn tiền. Lý do gỡ: dữ liệu mẫu cố định nhìn **không
+  phân biệt được với hệ thống hỏng**, và một băng cảnh báo màu vàng cũng không
+  đủ để cứu. Thiếu credential → **thoát ngay lúc khởi động (exit 2)**, không có
+  đường lui về dữ liệu mẫu. Đừng thêm lại "cho tiện"; đã có test chặn.
+- Processor và **đơn giá phải đi cùng một chỗ** (`PROCESSORS` trong
+  `devserver/__main__.py`, và `DOCAI_PROCESSOR_LABEL` cho audit log). Tách ra là
+  chỗ đã sai: ước tính chi phí lệch 20 lần vì lấy giá Form Parser cho Document
+  OCR. Mặc định `--processor dococr` = Enterprise Document OCR $0,0015/trang.
+- Chống tính tiền lặp **đã nằm sẵn trong hệ thống**: `/process` bỏ qua doc đã
+  `VALIDATED`. Không cần cache riêng ở tầng dev — cache đĩa từng có là thừa.
+- `AgreeRule`/`NumericRule` trong `core/rules.py` lọc theo **TRƯỜNG**, không theo
+  **LOẠI** — hễ hai chứng từ cùng có `currency`/`total_amount` là đem ra so, bất
+  kể là gì. Nên câu "rule cũ tự bỏ qua loại mới" **chỉ đúng với rule khai rõ
+  loại** (LineItem/QuantityCoverage/ReferenceExists). Loại `unknown` vì vậy bị
+  chặn ở tầng LOẠI bằng `NON_COMPARABLE_TYPES` trong `core/crosscheck.py`, chứ
+  không phải bằng cách bớt trường trong schema. Thêm loại mới nào không so sánh
+  được thì thêm vào set đó. Chạy thật mới lộ: 2 chứng từ của 2 lô hàng khác nhau
+  bị báo "lệch tiền 43 triệu".
+- `DOCUMENT_TYPE_LABELS` đọc **cho người** (`core/rules.py` in vào giải thích
+  mâu thuẫn). Chỉ dẫn cho Gemini để ở `DOCUMENT_TYPE_PROMPT_NOTES`. Gộp hai bảng
+  thì câu lệnh "CHỈ dùng khi..." lọt vào giải thích hiện cho người dùng.
+- `page["lines"]` của kết quả OCR là `[{text, confidence}]`, không phải list
+  chuỗi. Chỉ để hiển thị: `_build_ocr_text` dựng prompt Gemini từ `text`, KHÔNG
+  đọc `lines` — nếu không prompt phình gấp đôi. Đã chặn bằng test.
 - Bước `validate` **không gọi AI** nên `step_status="running"` của nó chỉ tồn
   tại vài micro giây, không quan sát được khi poll. Đúng cả ở production — đừng
   coi là lỗi.
@@ -114,7 +136,11 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 ## 6. Thêm loại chứng từ mới
 
 Thêm `schemas/<loại>.py` → đăng ký vào `schemas/registry.py` → thêm rule ở
-`core/rules.py` nếu cần. **Không** phải sửa prompt, Step Functions, API, data
+`core/rules.py` nếu cần. Chứng từ không khớp loại nào rơi vào `unknown`
+(`schemas/unknown.py`) — mọi trường tùy chọn, đi hết pipeline nhưng gần như
+không kiểm tra được gì. Nhãn của `unknown` trong `DOCUMENT_TYPE_LABELS` viết
+như một mệnh lệnh và nó phải đứng **CUỐI** `DOCUMENT_TYPES`: prompt sinh theo
+đúng thứ tự đó, đảo lên đầu là Gemini không phân loại đúng nữa. **Không** phải sửa prompt, Step Functions, API, data
 model. Rule cũ tự bỏ qua loại mới. Xem `docs/schemas.md` §1.
 
 ## 7. Quy ước kỹ thuật (rule cứng)
@@ -132,11 +158,11 @@ model. Rule cũ tự bỏ qua loại mới. Xem `docs/schemas.md` §1.
 
 ```powershell
 # Chạy cả hệ thống ở máy (2 terminal): backend rồi frontend
-cd backend;  .venv\Scripts\python.exe -m devserver --slow 2   # API :8000, moto :5000
+cd backend;  .venv\Scripts\python.exe -m devserver --upload ..\evaluation\dataset\documents
 cd frontend; npm run dev                                      # UI  :5173
 
 # Test backend — PHẢI chạy từ trong backend/ (import cần CWD ở đó)
-cd backend; .venv\Scripts\python.exe -m pytest -q          # 71 test, offline
+cd backend; .venv\Scripts\python.exe -m pytest -q          # 86 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy

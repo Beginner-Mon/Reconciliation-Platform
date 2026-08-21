@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { Loader2, Plus } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
-import { FakeAiBanner } from "../components/FakeAiBanner";
 import type { Project } from "../types";
 
 export function ProjectList() {
@@ -27,7 +27,7 @@ export function ProjectList() {
     load();
   }, []);
 
-  async function create(event: React.FormEvent) {
+  async function create(event: FormEvent) {
     event.preventDefault();
     if (!name.trim()) return;
     try {
@@ -42,7 +42,6 @@ export function ProjectList() {
 
   return (
     <div className="min-h-screen">
-      <FakeAiBanner />
 
       <div className="mx-auto w-full max-w-5xl px-6 py-10">
         <div className="flex items-center justify-between">
@@ -51,9 +50,9 @@ export function ProjectList() {
             onClick={() => setCreating((open) => !open)}
             title="Tạo project"
             aria-label="Tạo project"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-sky-600 text-xl leading-none text-white transition hover:bg-sky-700"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-sky-600 text-white transition hover:bg-sky-700"
           >
-            +
+            <Plus size={20} strokeWidth={2.5} />
           </button>
         </div>
 
@@ -97,12 +96,7 @@ export function ProjectList() {
               >
                 <span className="font-medium text-slate-800">{project.name}</span>
                 {project.processing_run_id && (
-                  <span
-                    title="Đang xử lý"
-                    className="shrink-0 animate-spin text-lg leading-none text-sky-600"
-                  >
-                    ⟳
-                  </span>
+                  <Loader2 size={18} className="shrink-0 animate-spin text-sky-600" />
                 )}
               </Link>
             ))}

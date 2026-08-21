@@ -44,8 +44,8 @@ def _fake_document():
     page = SimpleNamespace(
         page_number=1,
         lines=[
-            SimpleNamespace(layout=layout("Joma Bakery")),
-            SimpleNamespace(layout=layout("43 Tô Ngọc Vân")),
+            SimpleNamespace(layout=layout("Joma Bakery", confidence=0.97)),
+            SimpleNamespace(layout=layout("43 Tô Ngọc Vân", confidence=0.42)),
         ],
         tables=[
             SimpleNamespace(
@@ -72,7 +72,11 @@ def test_parse_lay_dung_lines_va_tables():
     page = result["pages"][0]
 
     assert result["text"] == FULL_TEXT
-    assert page["lines"] == ["Joma Bakery", "43 Tô Ngọc Vân"]
+    # Mỗi dòng kèm confidence riêng — giao diện tô vàng dòng đọc không chắc.
+    assert page["lines"] == [
+        {"text": "Joma Bakery", "confidence": 0.97},
+        {"text": "43 Tô Ngọc Vân", "confidence": 0.42},
+    ]
     # header_rows phải đứng TRƯỚC body_rows để _build_ocr_text dựng markdown đúng
     assert page["tables"][0]["rows"] == [{"cells": ["SL"]}, {"cells": ["2"]}]
 
@@ -97,3 +101,17 @@ def test_parse_khong_vo_khi_trang_rong():
     page = _parse_documentai(SimpleNamespace(text="", pages=[empty]))["pages"][0]
     assert page["mean_token_confidence"] is None
     assert page["lines"] == []
+
+
+def test_lines_khong_lam_phinh_prompt_gui_gemini():
+    """`lines` chỉ để hiển thị. _build_ocr_text dựng prompt từ `text`.
+
+    Nếu prompt bắt đầu nuốt cả `lines` thì mỗi trang bị gửi hai lần, tiền token
+    tăng gấp đôi mà không thêm thông tin gì.
+    """
+    from common.ai_clients import _build_ocr_text
+
+    ocr = _parse_documentai(_fake_document())
+    prompt_text = _build_ocr_text(ocr)
+    assert prompt_text.count("Joma Bakery") == 1
+    assert "confidence" not in prompt_text

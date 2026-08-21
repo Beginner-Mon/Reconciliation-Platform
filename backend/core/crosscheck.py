@@ -10,6 +10,18 @@ from .validate import validate_document
 
 UNLINKED_KEY = None
 
+# Chứng từ chưa phân loại KHÔNG được tham gia đối chiếu.
+#
+# `AgreeRule`/`NumericRule` lọc theo TRƯỜNG, không theo LOẠI — hễ hai chứng từ
+# cùng có `currency` hay `total_amount` là chúng đem ra so, bất kể đó là gì.
+# Với loại `unknown` thì mình không biết tài liệu nói về cái gì, nên phép so đó
+# vô nghĩa: chạy thật đã thấy hai chứng từ của hai lô hàng khác nhau, hai khách
+# hàng khác nhau bị báo "lệch tiền 43 triệu".
+#
+# Bỏ qua ở tầng LOẠI chứ không phải bỏ bớt trường trong schema: thêm trường mới
+# vào `Unknown` sau này sẽ lại làm vỡ nếu chặn theo trường.
+NON_COMPARABLE_TYPES = {"unknown"}
+
 
 def _correlation_key(ref: DocumentRef) -> str | None:
     return ref.get("po_number")
@@ -28,6 +40,16 @@ def build_refs(documents: list[dict]) -> tuple[list[DocumentRef], list[dict]]:
                     "document_id": document_id,
                     "reason": "không qua được validate",
                     "errors": result["schema_errors"] + result["rule_errors"],
+                }
+            )
+            continue
+        if result["document_type"] in NON_COMPARABLE_TYPES:
+            # Bỏ qua nhưng PHẢI báo ra, không được im lặng biến mất.
+            skipped.append(
+                {
+                    "document_id": document_id,
+                    "reason": "chưa phân loại được nên không đối chiếu",
+                    "errors": [],
                 }
             )
             continue

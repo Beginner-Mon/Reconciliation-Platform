@@ -30,6 +30,7 @@ export const DOCUMENT_TYPE_LABEL: Record<DocumentType, string> = {
   purchase_order: "Đơn đặt hàng",
   invoice: "Hóa đơn",
   acceptance_record: "Biên bản nghiệm thu",
+  unknown: "Chưa phân loại",
 };
 
 export const STEP_LABEL: Record<Step, string> = {
@@ -48,26 +49,23 @@ export const SEVERITY_LABEL: Record<Severity, string> = {
 /** Thứ tự này quyết định mâu thuẫn nào hiện trước. */
 export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
 
-export const SEVERITY_STYLE: Record<Severity, { box: string; chip: string; icon: string }> = {
+// Icon lấy từ lucide, khai trong DiscrepancyCard — ở đây chỉ giữ màu.
+export const SEVERITY_STYLE: Record<Severity, { box: string; chip: string }> = {
   critical: {
     box: "border-red-300 bg-red-50",
     chip: "bg-red-600 text-white",
-    icon: "⛔",
   },
   high: {
     box: "border-orange-300 bg-orange-50",
     chip: "bg-orange-500 text-white",
-    icon: "⚠",
   },
   medium: {
     box: "border-amber-300 bg-amber-50",
     chip: "bg-amber-500 text-white",
-    icon: "●",
   },
   low: {
     box: "border-slate-300 bg-slate-50",
     chip: "bg-slate-500 text-white",
-    icon: "○",
   },
 };
 

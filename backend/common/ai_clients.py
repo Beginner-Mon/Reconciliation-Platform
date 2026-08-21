@@ -17,7 +17,7 @@ Tài liệu thuộc một trong các loại: <<DOC_TYPES>>.
 Trả về DUY NHẤT một JSON object, không kèm text khác, đúng cấu trúc:
 
 {
-  "document_type": <<DOC_TYPE_ENUM>> | "unknown",
+  "document_type": <<DOC_TYPE_ENUM>>,
   "data": { ... các trường theo loại ... },
   "confidence": { "tên_trường": 0.0-1.0 }
 }
@@ -154,7 +154,17 @@ def _parse_documentai(doc) -> dict:
         pages.append(
             {
                 "page_number": page.page_number,
-                "lines": [_layout_text(line.layout, text) for line in (page.lines or [])],
+                # Kèm confidence TỪNG DÒNG để người review nhìn ra chỗ OCR không
+                # chắc, thay vì một khối text phẳng không biết tin chỗ nào.
+                # An toàn về chi phí: _build_ocr_text KHÔNG đọc `lines` (nó dùng
+                # `text`), nên prompt gửi Gemini không phình theo.
+                "lines": [
+                    {
+                        "text": _layout_text(line.layout, text),
+                        "confidence": _layout_confidence(line.layout),
+                    }
+                    for line in (page.lines or [])
+                ],
                 "tables": [
                     {
                         "rows": [

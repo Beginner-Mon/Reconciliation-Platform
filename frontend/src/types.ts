@@ -12,7 +12,8 @@ export type DocumentStatus =
 export type Step = "ocr" | "extract" | "validate";
 export type StepStatus = "running" | "done" | "failed";
 export type Severity = "critical" | "high" | "medium" | "low";
-export type DocumentType = "purchase_order" | "invoice" | "acceptance_record";
+/** "unknown" = chứng từ không khớp loại nào đã định nghĩa. Xem schemas/unknown.py. */
+export type DocumentType = "purchase_order" | "invoice" | "acceptance_record" | "unknown";
 
 export interface LineItem {
   item_name: string;
@@ -33,6 +34,13 @@ export interface Extraction {
   po_date?: string;
   invoice_date?: string;
   record_date?: string;
+  // Các trường của loại "unknown"
+  doc_number?: string;
+  doc_date?: string;
+  issuer?: string;
+  recipient?: string;
+  reference_numbers?: string[];
+  summary?: string;
   items?: LineItem[];
   subtotal?: number;
   tax_amount?: number;
@@ -154,15 +162,11 @@ export interface OcrResult {
     page_number: number;
     mean_token_confidence?: number | null;
     token_count?: number;
+    /** Từng dòng OCR đọc được, kèm độ tin cậy của riêng dòng đó. */
+    lines?: { text: string; confidence?: number | null }[];
     key_value_pairs?: { key: string; value: string; confidence?: number | null }[];
     tables?: { rows: { cells: string[] }[] }[];
   }[];
-}
-
-/** GET /__dev__ — CHỈ dev server có. 404 nghĩa là đang chạy production. */
-export interface DevMeta {
-  fake_ai: boolean;
-  latency: number;
 }
 
 export interface ProcessResult {

@@ -1,5 +1,4 @@
 import type {
-  DevMeta,
   Extraction,
   OcrResult,
   ProcessResult,
@@ -62,14 +61,6 @@ export const api = {
     request<OcrResult>("GET", `/projects/${projectId}/documents/${documentId}/ocr`),
 
   /** Chỉ dev server có route này. Production trả 404 → coi như AI thật. */
-  getDevMeta: async (): Promise<DevMeta | null> => {
-    try {
-      return await request<DevMeta>("GET", "/__dev__");
-    } catch {
-      return null;
-    }
-  },
-
   editDocument: (projectId: string, documentId: string, fields: Partial<Extraction>) =>
     request<{ document: unknown; validation: unknown; reconciliation: Reconciliation }>(
       "PATCH",

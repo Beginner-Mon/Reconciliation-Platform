@@ -1,3 +1,5 @@
+import os
+
 from common import (
     RateLimitError,
     estimate_docai_cost,
@@ -10,6 +12,11 @@ from common import (
 )
 
 from .steps import begin_step, finish_step
+
+# Nhãn ghi vào audit_log phải là processor ĐANG dùng thật. Ghi cứng
+# "documentai-form-parser" như bản cũ thì log nói một đằng, tiền trả một nẻo —
+# và chính chỗ đó đã làm ước tính chi phí lệch 20 lần.
+DOCAI_PROCESSOR_LABEL = os.environ.get("DOCAI_PROCESSOR_LABEL", "documentai")
 
 MIME_BY_EXT = {
     "pdf": "application/pdf",
@@ -39,7 +46,7 @@ def lambda_handler(event: dict, context) -> dict:
     except RateLimitError as exc:
         log_ai_call(
             document_id,
-            model="documentai-form-parser",
+            model=DOCAI_PROCESSOR_LABEL,
             started_at_ms=started,
             status="rate_limited",
             error=str(exc),
@@ -49,7 +56,7 @@ def lambda_handler(event: dict, context) -> dict:
     except Exception as exc:
         log_ai_call(
             document_id,
-            model="documentai-form-parser",
+            model=DOCAI_PROCESSOR_LABEL,
             started_at_ms=started,
             status="error",
             error=str(exc),
@@ -60,7 +67,7 @@ def lambda_handler(event: dict, context) -> dict:
     page_count = len(ocr_json.get("pages") or [])
     log_ai_call(
         document_id,
-        model="documentai-form-parser",
+        model=DOCAI_PROCESSOR_LABEL,
         started_at_ms=started,
         status="ok",
         estimated_cost_usd=estimate_docai_cost(page_count),

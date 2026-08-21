@@ -10,7 +10,7 @@ Cần **hai** terminal — frontend gọi API của dev server:
 ```powershell
 # 1. Backend
 cd backend
-.venv\Scripts\python.exe -m devserver --slow 2
+.venv\Scripts\python.exe -m devserver --upload ..\evaluation\dataset\documents
 
 # 2. Frontend
 cd frontend
@@ -20,7 +20,7 @@ npm run dev
 
 Mở http://localhost:5173
 
-`--slow 2` giả lập độ trễ AI để nhìn rõ thanh tiến trình nhích từng bước.
+`--upload ..\evaluation\dataset\documents` upload sẵn chứng từ thật (không xử lý, $0).
 Bỏ đi thì chạy gần như tức thì.
 
 Backend ở nơi khác thì tạo file `.env`:
@@ -28,25 +28,18 @@ Backend ở nơi khác thì tạo file `.env`:
 VITE_API_URL=http://127.0.0.1:8000
 ```
 
-## ⚠ Dev server dùng AI GIẢ
+## Dev server gọi AI THẬT — có tính phí
 
-Mặc định `devserver` **không đọc nội dung file thật** — nó trả một bộ dữ liệu mẫu
-cố định để việc làm giao diện không tốn tiền Document AI. Tải một PDF thật lên
-vẫn ra "ABC Technology / Laptop Dell XPS 13".
+Không còn chế độ dữ liệu mẫu. Mỗi lần bấm **Xử lý** là gọi Document AI và Gemini
+thật. Cần credential trong `evaluation/.env`; thiếu thì dev server **thoát ngay**
+chứ không chạy tiếp bằng dữ liệu bịa.
 
-UI hiện **băng vàng cảnh báo** ở đầu trang khi gặp trường hợp này. Muốn kết quả
-thật từ file thật:
+Mặc định dùng Enterprise Document OCR: **$0,0015/trang** — 6 chứng từ mẫu
+(14 trang) tốn $0,021. **Bấm Xử lý lần hai không tốn thêm**: backend bỏ qua
+chứng từ đã `VALIDATED`.
 
-```powershell
-cd backend
-.venv\Scripts\python.exe -m devserver --real-ai
-```
-
-Cần credential trong `evaluation/.env`, và **có tính phí** (~$0,03/trang với
-Form Parser). Băng cảnh báo sẽ tự biến mất.
-
-Frontend biết được nhờ gọi `GET /__dev__` — route **chỉ dev server có**;
-production trả 404 nên không bao giờ hiện băng.
+Nhưng tắt dev server là mất sạch (moto giữ dữ liệu trong RAM), và lần sau phải
+OCR lại từ đầu. Dùng `--upload` để khỏi kéo tay lại từng file.
 
 ## Hai màn hình
 
@@ -115,13 +108,13 @@ Xem [`evaluation/FINDINGS.md`](../evaluation/FINDINGS.md).
 ```
 src/
   types.ts      kiểu response API — cũng là tài liệu API
-  api.ts        12 endpoint + uploadFile() + getDevMeta()
+  api.ts        12 endpoint + uploadFile()
   format.ts     tiền VND, ngày, nhãn tiếng Việt, màu theo mức nghiêm trọng
   hooks/useProject.ts
   pages/        ProjectList, ProjectDetail
   components/   DocumentSidebar  WorkflowView  DocumentViewer
                 OcrPanel  EditPanel  DiscrepancyCard
-                ProgressBar  FakeAiBanner
+                ProgressBar
 ```
 
 ## Lệnh

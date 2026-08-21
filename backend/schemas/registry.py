@@ -3,29 +3,46 @@ from pydantic import BaseModel
 from .acceptance_record import AcceptanceRecord
 from .invoice import Invoice
 from .purchase_order import PurchaseOrder
+from .unknown import Unknown
 
+# THỨ TỰ CÓ Ý NGHĨA: prompt sinh ra theo đúng thứ tự này, nên "unknown" phải
+# đứng CUỐI — Gemini đọc hết các loại cụ thể rồi mới tới phương án dự phòng.
 DOCUMENT_TYPES: dict[str, type[BaseModel]] = {
     "purchase_order": PurchaseOrder,
     "invoice": Invoice,
     "acceptance_record": AcceptanceRecord,
+    "unknown": Unknown,
 }
 
+# Nhãn ĐỌC CHO NGƯỜI. `core/rules.py` dùng nó để in giải thích mâu thuẫn, nên
+# phải là danh từ ngắn gọn — đừng nhét câu lệnh dành cho Gemini vào đây.
 DOCUMENT_TYPE_LABELS = {
     "purchase_order": "đơn đặt hàng",
     "invoice": "hóa đơn",
     "acceptance_record": "biên bản nghiệm thu",
+    "unknown": "chưa phân loại",
+}
+
+# Chỉ dẫn thêm CHO GEMINI, chỉ dùng trong describe_all_types(). Tách khỏi
+# DOCUMENT_TYPE_LABELS vì hai bảng phục vụ hai người đọc khác nhau: gộp làm một
+# thì câu lệnh "CHỈ dùng khi..." lọt vào giải thích mâu thuẫn hiện cho người
+# dùng — đã xảy ra thật, chạy thử mới lộ.
+DOCUMENT_TYPE_PROMPT_NOTES = {
+    "unknown": "CHỈ chọn loại này khi tài liệu KHÔNG khớp bất kỳ loại nào ở trên",
 }
 
 DATE_FIELD_BY_TYPE = {
     "purchase_order": "po_date",
     "invoice": "invoice_date",
     "acceptance_record": "record_date",
+    "unknown": "doc_date",
 }
 
 NUMBER_FIELD_BY_TYPE = {
     "purchase_order": "po_number",
     "invoice": "invoice_number",
     "acceptance_record": "record_number",
+    "unknown": "doc_number",
 }
 
 
@@ -83,7 +100,9 @@ def describe_all_types() -> str:
     blocks = []
     for document_type in DOCUMENT_TYPES:
         label = DOCUMENT_TYPE_LABELS.get(document_type, document_type)
-        blocks.append(
-            f'Nếu loại "{document_type}" ({label}), các trường data:\n{describe_type(document_type)}'
-        )
+        note = DOCUMENT_TYPE_PROMPT_NOTES.get(document_type)
+        heading = f'Nếu loại "{document_type}" ({label})'
+        if note:
+            heading += f" — {note}"
+        blocks.append(f"{heading}, các trường data:\n{describe_type(document_type)}")
     return "\n\n".join(blocks)

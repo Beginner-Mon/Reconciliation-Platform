@@ -3,5 +3,5 @@ pytest>=8.0
 pyflakes>=3.0
 
 # [server] cần cho dev server: moto phải chạy như HTTP server thật thì presigned
-# URL mới trỏ về localhost và frontend PUT file lên được.
+# URL mới trỏ về localhost và frontend upload file lên được.
 moto[s3,dynamodb,server]>=5.0

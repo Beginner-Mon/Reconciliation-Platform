@@ -11,6 +11,7 @@ from .registry import (
     model_for,
     supported_types,
 )
+from .unknown import Unknown
 
 __all__ = [
     "AcceptanceRecord",
@@ -23,6 +24,7 @@ __all__ = [
     "LineItem",
     "NUMBER_FIELD_BY_TYPE",
     "PurchaseOrder",
+    "Unknown",
     "describe_all_types",
     "describe_type",
     "model_for",
