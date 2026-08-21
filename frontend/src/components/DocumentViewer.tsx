@@ -1,3 +1,4 @@
+import { ExternalLink } from "lucide-react";
 import type { DocumentView } from "../types";
 
 const IMAGE_TYPES = new Set(["png", "jpg", "jpeg", "tiff"]);
@@ -32,9 +33,9 @@ export function DocumentViewer({ document }: { document: DocumentView | null }) 
           href={document.view_url}
           target="_blank"
           rel="noreferrer"
-          className="shrink-0 text-sky-700 hover:underline"
+          className="flex shrink-0 items-center gap-1 text-sky-700 hover:underline"
         >
-          Mở tab mới ↗
+          Mở tab mới <ExternalLink size={13} />
         </a>
       </div>
 

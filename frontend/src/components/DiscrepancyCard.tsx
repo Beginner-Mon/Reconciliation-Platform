@@ -1,4 +1,6 @@
+import { AlertCircle, AlertOctagon, AlertTriangle, Info } from "lucide-react";
 import { DOCUMENT_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_STYLE, formatValue } from "../format";
+import type { Severity } from "../types";
 import type { Discrepancy, DocumentView } from "../types";
 
 interface Props {
@@ -7,14 +9,22 @@ interface Props {
   onEdit: (document: DocumentView) => void;
 }
 
+const SEVERITY_ICON: Record<Severity, typeof AlertOctagon> = {
+  critical: AlertOctagon,
+  high: AlertTriangle,
+  medium: AlertCircle,
+  low: Info,
+};
+
 export function DiscrepancyCard({ discrepancy, documents, onEdit }: Props) {
+  const Icon = SEVERITY_ICON[discrepancy.severity];
   const style = SEVERITY_STYLE[discrepancy.severity];
   const byId = new Map(documents.map((d) => [d.document_id, d]));
 
   return (
     <div className={`rounded-lg border p-4 ${style.box}`}>
       <div className="flex items-start gap-2">
-        <span className="text-lg leading-none">{style.icon}</span>
+        <Icon size={18} className="mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${style.chip}`}>

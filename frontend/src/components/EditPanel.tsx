@@ -1,3 +1,4 @@
+import { AlertTriangle, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { LOW_CONFIDENCE, formatMoney } from "../format";
@@ -113,7 +114,7 @@ export function EditPanel({ document, onSaved }: Props) {
         <h3 className="font-semibold text-slate-700">Sửa: {document.file_name}</h3>
         {(document.edited_fields?.length ?? 0) > 0 && (
           <span className="rounded bg-violet-100 px-2 py-0.5 text-xs text-violet-700">
-            ✎ đã sửa: {document.edited_fields?.join(", ")}
+            <Pencil size={11} className="inline" /> đã sửa: {document.edited_fields?.join(", ")}
           </span>
         )}
       </div>
@@ -135,10 +136,10 @@ export function EditPanel({ document, onSaved }: Props) {
                 {NHAN[key] ?? key}
                 {low && (
                   <span
-                    className="text-amber-600"
+                    className="flex items-center gap-0.5 text-amber-600"
                     title={`AI đọc trường này với độ tin cậy ${conf.toFixed(2)} — nên kiểm lại`}
                   >
-                    ⚠ {conf.toFixed(2)}
+                    <AlertTriangle size={12} /> {conf.toFixed(2)}
                   </span>
                 )}
               </span>

@@ -1,3 +1,12 @@
+import {
+  ArrowLeft,
+  Check,
+  Circle,
+  Loader2,
+  Play,
+  Plus,
+  X,
+} from "lucide-react";
 import { useRef } from "react";
 import type { DocumentView } from "../types";
 
@@ -7,11 +16,11 @@ import type { DocumentView } from "../types";
  *  quá trình xử lý đều nằm ở khung phải. Mỗi dòng chỉ có icon + tên file.
  */
 
-function icon(document: DocumentView) {
-  if (document.status === "FAILED") return { glyph: "✕", className: "text-red-600" };
-  if (document.status === "VALIDATED") return { glyph: "✓", className: "text-emerald-600" };
-  if (document.status === "PENDING") return { glyph: "○", className: "text-slate-400" };
-  return { glyph: "⟳", className: "animate-spin text-sky-600" };
+function StatusIcon({ document }: { document: DocumentView }) {
+  if (document.status === "FAILED") return <X size={16} className="text-red-600" />;
+  if (document.status === "VALIDATED") return <Check size={16} className="text-emerald-600" />;
+  if (document.status === "PENDING") return <Circle size={14} className="text-slate-400" />;
+  return <Loader2 size={16} className="animate-spin text-sky-600" />;
 }
 
 interface Props {
@@ -40,8 +49,8 @@ export function DocumentSidebar({
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white">
       <div className="border-b border-slate-200 px-4 py-3">
-        <a href="/" className="text-sm text-sky-700 hover:underline">
-          ← Danh sách project
+        <a href="/" className="flex items-center gap-1 text-sm text-sky-700 hover:underline">
+          <ArrowLeft size={14} /> Danh sách project
         </a>
         <h1 className="mt-1 truncate font-semibold text-slate-800" title={projectName}>
           {projectName}
@@ -65,9 +74,9 @@ export function DocumentSidebar({
           disabled={busy || running}
           title="Thêm chứng từ"
           aria-label="Thêm chứng từ"
-          className="flex h-6 w-6 items-center justify-center rounded border border-slate-300 text-base leading-none text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          className="flex h-6 w-6 items-center justify-center rounded border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40"
         >
-          +
+          <Plus size={14} strokeWidth={2.5} />
         </button>
       </div>
 
@@ -76,11 +85,10 @@ export function DocumentSidebar({
           <p className="px-4 py-8 text-center text-sm text-slate-500">
             Chưa có chứng từ.
             <br />
-            Bấm <span className="font-medium">+</span> để tải lên.
+            Bấm nút <Plus size={12} className="inline" /> để tải lên.
           </p>
         ) : (
           documents.map((document) => {
-            const { glyph, className } = icon(document);
             const selected = document.document_id === selectedId;
             return (
               <button
@@ -92,7 +100,9 @@ export function DocumentSidebar({
                     : "border-transparent text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                <span className={`w-4 shrink-0 text-center ${className}`}>{glyph}</span>
+                <span className="flex w-4 shrink-0 justify-center">
+                  <StatusIcon document={document} />
+                </span>
                 <span className="truncate" title={document.file_name}>
                   {document.file_name}
                 </span>
@@ -106,9 +116,17 @@ export function DocumentSidebar({
         <button
           onClick={onProcess}
           disabled={busy || running || documents.length === 0}
-          className="w-full rounded-lg bg-sky-600 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-50"
         >
-          {running ? "Đang chạy…" : "▶ Xử lý"}
+          {running ? (
+            <>
+              <Loader2 size={16} className="animate-spin" /> Đang chạy…
+            </>
+          ) : (
+            <>
+              <Play size={16} /> Xử lý
+            </>
+          )}
         </button>
       </div>
     </aside>

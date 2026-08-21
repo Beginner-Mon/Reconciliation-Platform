@@ -1,3 +1,4 @@
+import { Check, Loader2, X } from "lucide-react";
 import { ProgressBar } from "./ProgressBar";
 import type { DocumentView, Progress, Step } from "../types";
 
@@ -37,12 +38,12 @@ const DOT: Record<StepState, string> = {
   waiting: "border-slate-300 bg-white text-slate-300",
 };
 
-const GLYPH: Record<StepState, string> = {
-  done: "✓",
-  running: "⟳",
-  failed: "✕",
-  waiting: "○",
-};
+function StepGlyph({ state }: { state: StepState }) {
+  if (state === "done") return <Check size={14} strokeWidth={3} />;
+  if (state === "running") return <Loader2 size={14} className="animate-spin" />;
+  if (state === "failed") return <X size={14} strokeWidth={3} />;
+  return <span className="h-1.5 w-1.5 rounded-full bg-current" />;
+}
 
 interface Props {
   documents: DocumentView[];
@@ -83,9 +84,9 @@ export function WorkflowView({ documents, progress, active }: Props) {
                   <div key={step.key} className="flex flex-1 items-center last:flex-none">
                     <div className="flex flex-col items-center">
                       <span
-                        className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-xs ${DOT[states[index]]}`}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full border-2 ${DOT[states[index]]}`}
                       >
-                        {GLYPH[states[index]]}
+                        <StepGlyph state={states[index]} />
                       </span>
                       <span className="mt-1 text-xs text-slate-500">{step.label}</span>
                     </div>

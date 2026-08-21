@@ -1,3 +1,82 @@
+# Kết quả spike — vòng 2: chứng từ doanh nghiệp thật
+
+**Ngày:** 2026-08-20 · **Dữ liệu:** 6 chứng từ thật do công ty cung cấp
+(14 trang) · **Chi phí:** $0,021 (chỉ Enterprise Document OCR)
+
+## 1. Chứng từ nhận được KHÔNG phải loại hệ thống đang thiết kế
+
+Sáu file đều là **chứng từ vận tải biển**, không phải PO / hóa đơn GTGT /
+biên bản nghiệm thu:
+
+| File | Loại thật | Hãng |
+|---|---|---|
+| `BKGCONF_ASC0483717` | Booking Confirmation | CMA CGM |
+| `BL2311728600` | Arrival Notice / Sea WayBill | OOCL |
+| `BL6420901630` | Arrival Notice / Bill of Lading | COSCO |
+| `HASLS21250901217` | Booking Notice | Heung-A Line |
+| `NIHON CANPACK-SECLI…` | Thông báo hàng đến | AG Consolidation |
+| `SG2514576` | Booking Receipt Notice | CK Line |
+
+**Và chúng không đối chiếu được với nhau:** không có container, booking hay
+B/L nào trùng — sáu lô hàng khác nhau, khách hàng khác nhau (Samsung SDS, LDC
+Australia, Nihon Canpack…). Cross-check cần ≥2 chứng từ về **cùng một lô hàng**.
+
+Ngài xác nhận đề tài **chủ yếu về hóa đơn**, nên bộ này chỉ dùng để **đo chất
+lượng OCR**, chưa dùng cho phần trích xuất và đối chiếu.
+
+## 2. Enterprise Document OCR trên chứng từ thật
+
+Sáu file đều là **PDF sinh số** (có text layer), nên text nhúng sẵn trong file
+đóng vai trò **đáp án đúng** — đo được độ chính xác mà không cần ground truth
+viết tay.
+
+| File | Trang | Confidence | Chính xác | Dấu tiếng Việt |
+|---|---|---|---|---|
+| BKGCONF_ASC0483717 | 5 | 0,964 | 99,2% | 1/1 |
+| BL2311728600 | 2 | 0,975 | 98,8% | — |
+| BL6420901630 | 3 | 0,971 | **100,0%** | 39/39 |
+| HASLS21250901217 | 1 | 0,968 | 94,4% | — |
+| NIHON CANPACK | 2 | 0,973 | 98,7% | 160/161 |
+| SG2514576 | 1 | 0,972 | 94,4% | — |
+| **Trung bình** | **14** | **0,970** | **97,6%** | **200/201 = 99,5%** |
+
+**Dấu tiếng Việt đọc gần như tuyệt đối**: 200/201 từ có dấu khớp chính xác.
+
+### Đính chính cách đo
+
+Lần đo đầu cho 93,4%, trong đó hai file chỉ 80,6% và 88,6%. Xem kỹ thì **phần
+lệch hầu hết không phải lỗi OCR**: text layer của PDF dính nhãn form vào giá trị
+(`closing2025-10-17`, `09-october-25booking`, `2025-10-01date`) do file được
+sinh bằng định vị tuyệt đối không có dấu cách, trong khi **OCR tách đúng** thành
+`2025-10-17` + `closing`.
+
+Tức OCR đọc **tốt hơn chính text layer của file**, còn thước đo lại phạt nó.
+Đo lại bằng cách so không phân biệt khoảng trắng → **97,6%**.
+
+Lỗi OCR thật rất ít, ví dụ `booking` → `poking` ở một chỗ.
+
+## 3. So với vòng 1 (ảnh chụp điện thoại)
+
+| | Ảnh chụp MC-OCR | Chứng từ thật (PDF sinh số) |
+|---|---|---|
+| Confidence trung bình | 0,942 | **0,970** |
+| Loại đầu vào | ảnh nghiêng, mờ | PDF có text layer |
+
+Chứng từ doanh nghiệp thật là **ca dễ hơn nhiều** so với ảnh chụp. Nghĩa là câu
+hỏi "processor nào đọc tiếng Việt tốt hơn" **ít quan trọng hơn dự đoán** trên
+loại dữ liệu này — Document OCR ($1,50/1.000 trang) đã đạt 97,6%.
+
+## 4. Còn thiếu để chốt processor
+
+Chưa chạy Form Parser và Layout Parser trên bộ này (~$0,56) nên **chưa so được**.
+Nhưng với 97,6% và confidence 0,970 từ cái rẻ nhất, cần cân nhắc: hai cái đắt
+hơn phải hơn được bao nhiêu mới đáng gấp 7–20 lần tiền?
+
+Câu hỏi thật sự còn lại là **tách bảng** — line item của hóa đơn nằm trong bảng,
+mà Document OCR không tách bảng. Chỉ trả lời được khi có **hóa đơn thật**.
+
+---
+
 # Kết quả spike — vòng 1
 
 **Ngày:** 2026-08-17 · **Dữ liệu:** 5 ảnh MC-OCR 2021 (hóa đơn bán lẻ tiếng Việt,
