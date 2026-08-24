@@ -13,6 +13,9 @@ Hạ tầng serverless trên **AWS** (API Gateway + Lambda + Step Functions +
 DynamoDB + S3), AI chạy trên **Google Cloud** (Document AI + Gemini), IaC bằng
 **Terraform**. Frontend React 19 + TypeScript + Vite + Tailwind v4.
 
+Đo trên 6 chứng từ thật: OCR chính xác **97,6%**, dấu tiếng Việt **99,5%**, chi
+phí **$0,021** — [evaluation/FINDINGS.md](evaluation/FINDINGS.md).
+
 > **Trạng thái: POC.** Chưa có authentication — đây là giới hạn **cố ý** ở giai
 > đoạn này, xem [docs/architecture.md](docs/architecture.md) §11. Đừng đưa dữ
 > liệu thật chưa ẩn danh vào hệ thống.
@@ -42,64 +45,27 @@ vụ, không phải tối ưu.
 
 ## 2. Kiến trúc
 
-```mermaid
-flowchart TB
-    UI["Frontend React<br/>2 màn hình, poll 2s"]
+![Kiến trúc hệ thống: User qua API Gateway tới 4 Lambda api; api-process khởi động Step Functions chạy Map gồm OCR → Extract → Validate rồi Reconcile; OCR gọi Document AI, Extract gọi Gemini](docs/images/architecture.png)
 
-    subgraph AWS["AWS — ap-southeast-1"]
-        APIGW["API Gateway HTTP"]
-        API["Lambda API<br/>projects · documents · process<br/>reconcile · review"]
-        SFN["Step Functions STANDARD"]
-        W["6 Lambda worker<br/>ocr · extract · validate<br/>reconcile · mark-failed"]
-        S3[("S3<br/>file gốc + output lớn")]
-        DDB[("DynamoDB — 5 bảng<br/>projects · documents · runs<br/>reconciliations · audit_log")]
-    end
+<sub>Vẽ bằng draw.io. File PNG nhúng sẵn XML nguồn — kéo thẳng vào
+[app.diagrams.net](https://app.diagrams.net) là sửa tiếp được, không cần giữ file `.drawio` riêng.</sub>
 
-    subgraph GCP["Google Cloud"]
-        DOCAI["Document AI<br/>OCR tiếng Việt"]
-        GEM["Gemini<br/>classify + extract"]
-    end
+- **API Gateway ≠ Lambda `api`** — Gateway không chứa code dự án, chỉ lo TLS,
+  CORS và chọn một trong bốn Lambda.
+- **`states:StartExecution` chỉ ở `api-process`** — quyền *tiêu tiền AI*, cô lập
+  nó là lý do chính của việc chia bốn. Bảng IAM:
+  [docs/iac-plan.md](docs/iac-plan.md) §3.
+- **Bảng định tuyến nằm ở hai nơi** (Terraform + `handler.py`) nên
+  [`tests/test_routes.py`](backend/tests/test_routes.py) đọc thẳng `main.tf` để
+  khoá lại.
+- Step Functions **không chạm** DynamoDB/S3, Document AI **không nối** Gemini —
+  hai chỗ hay vẽ sai: [docs/architecture.md](docs/architecture.md) §4.1, §7.4.
 
-    UI -->|REST| APIGW --> API
-    UI -.->|"presigned POST<br/>upload thẳng"| S3
-    API -->|StartExecution| SFN --> W
-    W --> DOCAI
-    W --> GEM
-    API <--> DDB
-    W <--> DDB
-    W <--> S3
-```
-
-Luồng xử lý một *processing run*:
-
-```mermaid
-flowchart LR
-    START([POST /process]) --> MAP
-
-    subgraph MAP["Map — MaxConcurrency 3, mỗi chứng từ"]
-        direction LR
-        OCR["Ocr<br/>Document AI"] --> EXT["Extract<br/>Gemini"] --> VAL["Validate<br/>Pydantic + rule"]
-    end
-
-    MAP --> REC["Reconcile<br/>rule engine N-way<br/>KHÔNG gọi AI"]
-    REC --> AW(["AWAITING_REVIEW<br/>execution kết thúc"])
-    AW -.->|"API độc lập"| HR["Human Review<br/>sửa tay · duyệt · từ chối"]
-
-    OCR -.->|Catch| FAIL["MarkDocumentFailed"]
-    EXT -.->|Catch| FAIL
-    VAL -.->|Catch| FAIL
-    FAIL -.-> MAP
-```
-
-Ba quyết định thiết kế đáng chú ý:
-
-- **Tách 3 state trong Map** (Ocr → Extract → Validate) để Gemini trả 429 chỉ
-  retry Gemini, **không chạy lại Document AI** — Document AI tốn tiền thật.
-- **`Catch` nằm bên trong Map iterator** nên một file hỏng không giết cả run.
-- **Step Functions không chờ Human Review** (không dùng task token). Review là
-  bước cuối và người mới là bên sửa tay → không còn gì để orchestrate. Giữ
-  execution treo nhiều giờ chỉ để chờ người thì tốn quota và khó debug hơn.
-
+Ba chi tiết của luồng xử lý mà sơ đồ chưa nói hết: **Map tách 3 state** để Gemini
+trả 429 chỉ retry Gemini, không chạy lại Document AI (tốn tiền thật); **`Catch`
+nằm bên trong iterator** nên một file hỏng không giết cả run, nó rơi sang
+`MarkDocumentFailed` còn các file khác chạy tiếp; và Step Functions **không chờ**
+Human Review — execution kết thúc ở `AWAITING_REVIEW`, review là API riêng.
 Lý do đầy đủ: [docs/architecture.md](docs/architecture.md) §4–§6.
 
 ---
@@ -108,23 +74,21 @@ Lý do đầy đủ: [docs/architecture.md](docs/architecture.md) §4–§6.
 
 ```
 backend/
-  api/         handler.py (router) + projects · documents · process · reconcile · review
+  api/         handler.py (router 4 miền) + projects · documents · process · reconcile · review
   workers/     ocr · extract · validate · reconcile · mark_failed + steps.py
-  core/        validate.py (luật TRONG 1 chứng từ)
-               rules.py + crosscheck.py (luật GIỮA nhiều chứng từ) — KHÔNG gọi AI
+  core/        validate.py (luật TRONG 1 chứng từ) · rules.py + crosscheck.py
+               (luật GIỮA nhiều chứng từ) — KHÔNG gọi AI
   common/      s3 · dynamodb · stepfunctions · ai_clients · audit · errors · ids
   schemas/     purchase_order · invoice · acceptance_record · unknown + registry.py
-  devserver/   chạy toàn bộ backend ở localhost (moto giả lập AWS, AI THẬT)
-  tests/       pytest, chạy offline hoàn toàn
+  devserver/   chạy backend ở localhost (moto giả lập AWS, AI THẬT)
+  tests/       pytest, offline hoàn toàn
 frontend/      React 19 + TS + Vite + Tailwind v4 — 2 màn hình
-docs/          architecture · data-model · schemas · iac-plan
-evaluation/    spike đo chất lượng AI + FINDINGS.md
-infra/         Terraform; modules/aws/statemachine.asl.json là định nghĩa Step Functions
+docs/ · evaluation/ · infra/    tài liệu · spike đo AI · Terraform
 ```
 
-Thêm loại chứng từ mới = thêm 1 file trong `schemas/` + đăng ký vào
-`registry.py` + (nếu cần) vài rule trong `core/rules.py`. **Không** phải sửa
-prompt, Step Functions, API hay data model — prompt được **sinh ra từ registry**.
+Thêm loại chứng từ mới = 1 file trong `schemas/` + đăng ký vào `registry.py` +
+(nếu cần) vài rule trong `core/rules.py`. **Không** phải sửa prompt, Step
+Functions, API hay data model — prompt được **sinh ra từ registry**.
 
 ---
 
@@ -157,39 +121,25 @@ buộc phải có moto ở **chế độ server**, không dùng được bản i
 
 ```powershell
 cd evaluation
-Copy-Item .env.example .env
-notepad .env
+Copy-Item .env.example .env      # rồi điền GEMINI_API_KEY, DOCAI_PROJECT,
+                                 # DOCAI_OCR_PROCESSOR_ID
 ```
 
-Tối thiểu ba biến để chạy được dev server:
-
-| Biến | Lấy ở đâu |
-|---|---|
-| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — miễn phí, không cần thẻ |
-| `DOCAI_PROJECT` | Project **ID** trên Google Cloud Console (không phải tên hiển thị) |
-| `DOCAI_OCR_PROCESSOR_ID` | Tạo processor **Document OCR** ở [Processor library](https://console.cloud.google.com/ai/document-ai/processor-library) |
-
-Thêm `gcloud auth application-default login` để xác thực Document AI (hoặc trỏ
-`GOOGLE_APPLICATION_CREDENTIALS` tới file service account JSON).
-
-`.env` **đã gitignore** — không commit, không dán nội dung vào chat.
-Chú thích từng biến nằm ngay trong `.env.example`; hướng dẫn chi tiết ở
-[evaluation/README.md](evaluation/README.md).
+Chú thích từng biến nằm ngay trong `.env.example`; lấy giá trị ở đâu thì xem
+[evaluation/README.md](evaluation/README.md). `.env` **đã gitignore** — không
+commit, không dán nội dung vào chat.
 
 ### 4.4 Cảnh báo: dev server gọi AI THẬT và tốn tiền thật
 
-> - **AWS thì giả, AI thì thật.** Chỉ hạ tầng AWS được `moto` giả lập. Document
->   AI và Gemini luôn được gọi thật. **Không có chế độ dữ liệu mẫu** — nó từng
->   tồn tại và đã bị gỡ, vì dữ liệu bịa trên màn hình *không phân biệt được với
->   hệ thống hỏng*.
-> - **Thiếu credential thì dev server thoát ngay lúc khởi động** (exit 2), in rõ
->   thiếu biến nào. Không có đường lui.
-> - Mặc định `--processor dococr` = Enterprise Document OCR **$0,0015/trang**.
->   6 chứng từ mẫu (14 trang) ≈ **$0,021**, cộng ~$0,01 tiền Gemini.
-> - **Bấm Xử lý lần hai không tốn thêm**: `/process` bỏ qua chứng từ đã
->   `VALIDATED`.
-> - Nhưng `moto` giữ mọi thứ **trong RAM** — tắt dev server là mất sạch project,
->   chứng từ, kết quả OCR; lần sau phải OCR lại và tốn tiền lại.
+> - **AWS thì giả, AI thì thật.** Chỉ hạ tầng AWS được `moto` giả lập. **Không
+>   có chế độ dữ liệu mẫu** — nó từng tồn tại và đã bị gỡ, vì dữ liệu bịa trên
+>   màn hình *không phân biệt được với hệ thống hỏng*.
+> - **Thiếu credential thì thoát ngay lúc khởi động** (exit 2). Không có đường lui.
+> - Mặc định Enterprise Document OCR **$0,0015/trang** — 6 chứng từ mẫu (14
+>   trang) ≈ **$0,021**, cộng ~$0,01 Gemini.
+> - **Bấm Xử lý lần hai không tốn thêm**: `/process` bỏ qua chứng từ đã `VALIDATED`.
+> - Nhưng `moto` giữ mọi thứ **trong RAM** — tắt là mất sạch, lần sau OCR lại từ
+>   đầu và tốn tiền lại.
 
 ### 4.5 Chạy — hai terminal
 
@@ -209,26 +159,12 @@ npm run dev
 | API | http://127.0.0.1:8000 |
 | AWS giả lập | http://127.0.0.1:5000 (moto) |
 
-Cờ `--upload` tạo sẵn một project và upload sẵn file trong thư mục — **$0, vì
-upload không gọi AI**, chỉ bấm Xử lý mới tốn. Nó có mặt để khỏi phải kéo tay
-từng file sau mỗi lần khởi động lại.
+Cờ `--upload` tạo sẵn project và upload sẵn file trong thư mục — **$0, vì upload
+không gọi AI**. Lưu ý `evaluation/dataset/documents/` **đã gitignore** nên rỗng
+khi mới clone: bỏ cờ này đi, hoặc tự bỏ file `.pdf` / `.png` / `.jpg` vào đó.
 
-Lưu ý `evaluation/dataset/documents/` **đã gitignore** (không phân phối lại
-chứng từ doanh nghiệp qua repo), nên thư mục này rỗng khi mới clone — bỏ cờ
-`--upload` đi, hoặc tự bỏ file `.pdf` / `.png` / `.jpg` của Ngài vào đó.
-
-### 4.6 Dùng thử
-
-1. Tạo project ở màn hình danh sách.
-2. Kéo thả chứng từ vào (upload đi **thẳng lên S3** bằng presigned POST, Lambda
-   không cầm file).
-3. Bấm **Xử lý** — khung phải hiện sơ đồ tiến trình, thanh tiến độ nhích theo
-   **bước** (mỗi chứng từ 3 bước) chứ không theo số file.
-4. Xong thì xem tab **Cảnh báo**: mâu thuẫn xếp theo mức nghiêm trọng.
-5. Tab **Sửa** để sửa tay — trường AI đọc không chắc (confidence < 0,75) được
-   tô vàng; lưu xong hệ thống **tự đối soát lại**.
-
-Mô tả đầy đủ 4 tab và cơ chế polling: [frontend/README.md](frontend/README.md).
+Mô tả 4 tab của giao diện và cơ chế polling:
+[frontend/README.md](frontend/README.md).
 
 ---
 
@@ -240,15 +176,10 @@ cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers
 cd frontend; npm run typecheck
 ```
 
-Hai điều cần biết:
-
-- **Phải chạy từ trong `backend/`** — import phụ thuộc vào thư mục làm việc.
-- Test chạy **offline hoàn toàn**: không cần AWS thật (đã có `moto`) và không
-  cần Google credential (`common/ai_clients.py` import thư viện Google **lazy**,
-  bên trong hàm chứ không ở đầu file).
-
-Kiểm thử Step Functions không cần deploy, không cần Docker — xem
-[infra/statemachine-test/README.md](infra/statemachine-test/README.md).
+**Phải chạy từ trong `backend/`** (import phụ thuộc CWD). Test **offline hoàn
+toàn** — không cần AWS thật (`moto`) lẫn Google credential (`ai_clients.py`
+import lazy trong hàm). Kiểm thử Step Functions không cần deploy, không cần
+Docker: [infra/statemachine-test/README.md](infra/statemachine-test/README.md).
 
 ---
 
@@ -263,17 +194,13 @@ cd infra
 .\bin\terraform.exe apply -var-file=dev.tfvars
 ```
 
-Điều kiện cần trước đó:
+Tạo ra **10 Lambda** (4 `api` + 6 worker). Điều kiện cần trước đó: binary
+terraform trong `infra/bin/` (**không** cài được vào `.venv` — đó là binary Go,
+không phải package PyPI) · `aws configure` region `ap-southeast-1` ·
+`dev.tfvars` điền từ `dev.tfvars.example`.
 
-- Tải binary terraform vào `infra/bin/` (đã gitignore). Terraform **không** cài
-  được vào `.venv` — `.venv` chỉ chứa package PyPI, còn terraform là binary Go.
-- `aws configure` với region `ap-southeast-1`.
-- `Copy-Item dev.tfvars.example dev.tfvars` rồi điền `gcp_project_id`,
-  `gcp_docai_processor_id`, `gemini_api_key`.
-
-**Hướng dẫn đầy đủ từng bước: [infra/README.md](infra/README.md)** — lấy
-credential ở đâu, tạo processor thế nào, kiểm tra sau khi apply, và cách xoá hạ
-tầng.
+**Hướng dẫn đầy đủ: [infra/README.md](infra/README.md)** — lấy credential, tạo
+processor, kiểm tra sau apply, xoá hạ tầng.
 
 ---
 
@@ -294,30 +221,7 @@ tầng.
 
 ---
 
-## 8. Kết quả đo được
-
-Enterprise Document OCR trên **6 chứng từ thật do doanh nghiệp cung cấp**
-(14 trang, PDF sinh số), chi phí **$0,021**:
-
-| Chỉ số | Kết quả |
-|---|---|
-| Chính xác so với text layer của file | **97,6%** |
-| Từ có dấu tiếng Việt đọc đúng | **200/201 = 99,5%** |
-| Confidence trung bình | **0,970** |
-
-Đáng chú ý: OCR đọc **tốt hơn chính text layer** của một số file — text layer bị
-dính nhãn form vào giá trị (`closing2025-10-17`) trong khi OCR tách đúng thành
-hai phần.
-
-Ngữ cảnh cần nói rõ: bộ 6 file này là **chứng từ vận tải biển** (booking
-confirmation, arrival notice, bill of lading), không phải PO / hóa đơn GTGT /
-biên bản nghiệm thu, và **không đối chiếu được với nhau** vì là 6 lô hàng khác
-nhau. Nên chúng chỉ dùng để đo **chất lượng OCR**, chưa dùng cho phần trích xuất
-và đối chiếu. Chi tiết: [evaluation/FINDINGS.md](evaluation/FINDINGS.md).
-
----
-
-## 9. Chưa làm
+## 8. Chưa làm
 
 Authentication (Cognito) · WebSocket cho progress (hiện dùng polling, nâng cấp
 sau bằng DynamoDB Streams mà không phải sửa worker) · remote tfstate ·

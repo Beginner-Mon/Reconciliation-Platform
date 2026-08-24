@@ -27,8 +27,8 @@ không chạy lại các file cũ. Đây là yêu cầu nghiệp vụ, không ph
 ## 3. Ba endpoint, ba lifecycle
 
 ```
-[1] POST /projects/{id}/documents   -> N presigned PUT URL
-       frontend PUT thẳng lên S3, Lambda không cầm raw file
+[1] POST /projects/{id}/documents   -> N presigned POST URL
+       frontend POST thẳng lên S3, Lambda không cầm raw file
 
 [2] POST /projects/{id}/process     -> user CHỦ ĐỘNG bấm
        verify head_object + size
@@ -46,6 +46,21 @@ không chạy lại các file cũ. Đây là yêu cầu nghiệp vụ, không ph
        POST  /reconciliations/{id}/approve | /reject
 ```
 
+### 3.1 Row DynamoDB sinh ra TRƯỚC khi file lên S3
+
+Endpoint [1] làm hai việc theo thứ tự: `put_item` tạo row `status=PENDING` rồi
+**mới** ký presigned URL. Bắt buộc phải theo thứ tự đó vì `s3_key` chứa
+`document_id` — không có id thì không dựng được key để ký.
+
+Hệ quả: **cú upload lên S3 không ghi gì vào DynamoDB.** Không có S3 event, không
+có Lambda trigger. Hệ thống biết file tồn tại vì nó **tự đặt tên và tự ghi sổ
+trước**, chứ không phải vì đi dò S3 (`ListObjectsV2` bị cấm — xem §4.6 CLAUDE.md).
+
+Nên `status` **không** trả lời được câu hỏi "file đã lên S3 chưa": `PENDING` phủ
+cả ba trường hợp — vừa xin URL, upload xong đang chờ, và vừa bị `/process` reset
+để chạy lại. Nếu upload hỏng giữa chừng, DynamoDB ghi nhận một file mà S3 không
+có, và `head_object` trong `/process` là **chỗ duy nhất** phát hiện ra.
+
 ## 4. Vì sao dùng Step Functions (đảo ngược quyết định của v1)
 
 v1 lập luận không cần Step Functions vì đơn vị xử lý là 1 document và S3 event
@@ -58,6 +73,28 @@ project:
   không chạy lại Document AI (tốn tiền thật).
 - Cần **cô lập lỗi per-document**: 1 file hỏng không được giết cả run.
 - Cần **workflow execution state** để debug, thứ DynamoDB status không thay được.
+
+### 4.1 Step Functions chỉ điều phối, KHÔNG cầm dữ liệu
+
+Điểm dễ vẽ sai nhất khi làm sơ đồ kiến trúc. Step Functions **không đọc/ghi
+DynamoDB hay S3**, và cũng không thể:
+
+- IAM role của nó (`aws_iam_role_policy.sfn_invoke_lambda`) có **đúng một quyền**:
+  `lambda:InvokeFunction`. Không `dynamodb:*`, không `s3:*`.
+- Mọi `Resource` trong `statemachine.asl.json` đều là **Lambda ARN** — không dùng
+  direct service integration (`arn:aws:states:::dynamodb:*`) ở đâu cả.
+
+Giữa các bước nó chỉ chuyền một JSON nhỏ chứa **đường dẫn**: `project_id`,
+`document_id`, `s3_key`, `ocr_s3_key`. Nội dung thật nằm ở S3 và DynamoDB, và
+**chỉ Lambda mới chạm tới**.
+
+Nên trong sơ đồ, mũi tên tới DynamoDB/S3 phải xuất phát từ **Lambda**, không phải
+từ Step Functions:
+
+```
+SAI:   Step Functions ──────► DynamoDB
+ĐÚNG:  Step Functions ──invoke──► Lambda worker ──► DynamoDB / S3
+```
 
 ## 5. Vì sao Human Review KHÔNG dùng task token
 
@@ -100,6 +137,37 @@ không sửa prompt bằng tay.
 429 / quota / 503 được bọc thành `RateLimitError` để Step Functions `Retry`
 phân biệt được với lỗi logic (backoff 2x + full jitter, tối đa 4 lần).
 
+### 7.4 Hai dịch vụ Google RỜI NHAU
+
+Document AI và Gemini không biết nhau tồn tại. Chúng thậm chí không dùng chung
+xác thực:
+
+| | Client | Xác thực |
+|---|---|---|
+| Document AI | `documentai.DocumentProcessorServiceClient` | service account / ADC |
+| Gemini | `genai.Client(api_key=...)` | `GEMINI_API_KEY` |
+
+API key của Gemini lấy từ AI Studio, **không bắt buộc chung project GCP** với
+Document AI.
+
+Dữ liệu đi từ bên này sang bên kia **qua S3**, không nối trực tiếp:
+
+```
+Document AI ──► workers/ocr.py ──► write_json() ──► S3 (JSON OCR)
+                                                        │
+                     Step Functions chuyền ocr_s3_key ──┤   ← chỉ CÁI KHOÁ
+                                                        ▼
+                              workers/extract.py ──► read_json() ──► Gemini
+```
+
+**Gemini không bao giờ nhận file gốc.** `extract_with_gemini(ocr_json)` dựng
+prompt bằng `_build_ocr_text()` — tức Gemini chỉ thấy **text**. Có hàm
+`extract_with_gemini_pdf()` gửi thẳng file, nhưng nó chỉ phục vụ spike so sánh ở
+`evaluation/`, **không worker nào gọi**.
+
+Hệ quả thực dụng: bước `Extract` retry được mà không tốn tiền Document AI lần
+nữa, và giới hạn ~15 trang / 20MB chỉ áp lên bước `ocr`.
+
 ## 8. Validate và Cross-check — hai tầng khác nhau
 
 | Tầng | File | Phạm vi |
@@ -119,7 +187,7 @@ Functions/API. Xem `docs/schemas.md` cho danh sách rule.
 | Thành phần | Công nghệ | Ghi chú |
 |---|---|---|
 | Frontend | React (Vite) + S3/CloudFront | Chưa làm |
-| API | API Gateway HTTP + 1 Lambda | POC: **chưa có auth** (giới hạn cố ý) |
+| API | API Gateway HTTP + **4 Lambda** | chia theo miền: projects · documents · review · process. POC: **chưa có auth** (giới hạn cố ý) |
 | Orchestration | Step Functions STANDARD | Map + retry + catch per-document |
 | Worker | 6 Lambda | ocr, extract, validate, reconcile, mark-failed, mark-run-failed |
 | Storage | S3 | gom hết dưới `projects/{project_id}/` |

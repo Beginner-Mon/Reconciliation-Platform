@@ -73,9 +73,17 @@ nào trong `api/`, `workers/`, `core/`, `common/`, `schemas/`.
 |---|---|---|
 | `core/`, `schemas/`, `api/`, `workers/`, `common/` | **y hệt** | **y hệt** |
 | Vận chuyển | `http_server.py` | API Gateway |
+| Cửa vào API | **1** — `lambda_handler` gộp đủ 12 route | **4** Lambda chia theo miền |
 | Điều phối | `pipeline.py` | Step Functions |
 | Hạ tầng AWS | moto server | AWS thật |
 | AI | **Document AI + Gemini thật** | Document AI + Gemini |
+
+Chỗ "1 cửa vs 4 cửa" là **khác biệt duy nhất còn lại** ngoài vận chuyển/điều
+phối, và nó nằm ở tầng entry point chứ không phải tầng nghiệp vụ: cloud chia 4
+Lambda để thu hẹp IAM (chỉ `api-process` có `states:StartExecution`), còn ở máy
+thì không có IAM nên chia làm gì. Bốn handler miền và `lambda_handler` gộp đều
+sinh từ **cùng một bảng route** trong `api/handler.py`, nên không thể lệch nhau —
+`tests/test_routes.py` khoá luôn cả việc đó.
 
 Chuyển môi trường chỉ bằng biến môi trường:
 `AWS_ENDPOINT_URL` có → moto; không có → AWS thật.
