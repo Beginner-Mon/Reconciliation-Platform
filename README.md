@@ -24,8 +24,6 @@ phí **$0,021** — [evaluation/FINDINGS.md](evaluation/FINDINGS.md).
 
 ## 1. Ba khái niệm cốt lõi
 
-Đọc kỹ phần này trước tiên — nó là thứ quyết định toàn bộ thiết kế còn lại.
-
 | Khái niệm | Vòng đời | Ghi chú |
 |---|---|---|
 | **Project** | Sống lâu dài | Chứa N chứng từ, được bồi thêm theo thời gian |
@@ -50,16 +48,15 @@ vụ, không phải tối ưu.
 <sub>Vẽ bằng draw.io. File PNG nhúng sẵn XML nguồn — kéo thẳng vào
 [app.diagrams.net](https://app.diagrams.net) là sửa tiếp được, không cần giữ file `.drawio` riêng.</sub>
 
-- **API Gateway ≠ Lambda `api`** — Gateway không chứa code dự án, chỉ lo TLS,
-  CORS và chọn một trong bốn Lambda.
 - **`states:StartExecution` chỉ ở `api-process`** — quyền *tiêu tiền AI*, cô lập
   nó là lý do chính của việc chia bốn. Bảng IAM:
   [docs/iac-plan.md](docs/iac-plan.md) §3.
 - **Bảng định tuyến nằm ở hai nơi** (Terraform + `handler.py`) nên
   [`tests/test_routes.py`](backend/tests/test_routes.py) đọc thẳng `main.tf` để
   khoá lại.
-- Step Functions **không chạm** DynamoDB/S3, Document AI **không nối** Gemini —
-  hai chỗ hay vẽ sai: [docs/architecture.md](docs/architecture.md) §4.1, §7.4.
+- **Step Functions không chạm DynamoDB/S3** — mũi tên tới Storage trên sơ đồ là
+  của các Lambda worker bên trong. Chi tiết:
+  [docs/architecture.md](docs/architecture.md) §4.1.
 
 Ba chi tiết của luồng xử lý mà sơ đồ chưa nói hết: **Map tách 3 state** để Gemini
 trả 429 chỉ retry Gemini, không chạy lại Document AI (tốn tiền thật); **`Catch`
@@ -126,15 +123,13 @@ Copy-Item .env.example .env      # rồi điền GEMINI_API_KEY, DOCAI_PROJECT,
 ```
 
 Chú thích từng biến nằm ngay trong `.env.example`; lấy giá trị ở đâu thì xem
-[evaluation/README.md](evaluation/README.md). `.env` **đã gitignore** — không
-commit, không dán nội dung vào chat.
+[evaluation/README.md](evaluation/README.md). `.env` đã gitignore.
 
 ### 4.4 Cảnh báo: dev server gọi AI THẬT và tốn tiền thật
 
-> - **AWS thì giả, AI thì thật.** Chỉ hạ tầng AWS được `moto` giả lập. **Không
->   có chế độ dữ liệu mẫu** — nó từng tồn tại và đã bị gỡ, vì dữ liệu bịa trên
->   màn hình *không phân biệt được với hệ thống hỏng*.
-> - **Thiếu credential thì thoát ngay lúc khởi động** (exit 2). Không có đường lui.
+> - **AWS thì giả, AI thì thật.** Chỉ hạ tầng AWS được `moto` giả lập; Document
+>   AI và Gemini luôn gọi thật.
+> - **Thiếu credential thì thoát ngay lúc khởi động** (exit 2).
 > - Mặc định Enterprise Document OCR **$0,0015/trang** — 6 chứng từ mẫu (14
 >   trang) ≈ **$0,021**, cộng ~$0,01 Gemini.
 > - **Bấm Xử lý lần hai không tốn thêm**: `/process` bỏ qua chứng từ đã `VALIDATED`.
@@ -195,8 +190,7 @@ cd infra
 ```
 
 Tạo ra **10 Lambda** (4 `api` + 6 worker). Điều kiện cần trước đó: binary
-terraform trong `infra/bin/` (**không** cài được vào `.venv` — đó là binary Go,
-không phải package PyPI) · `aws configure` region `ap-southeast-1` ·
+terraform tải sẵn vào `infra/bin/` · `aws configure` region `ap-southeast-1` ·
 `dev.tfvars` điền từ `dev.tfvars.example`.
 
 **Hướng dẫn đầy đủ: [infra/README.md](infra/README.md)** — lấy credential, tạo
