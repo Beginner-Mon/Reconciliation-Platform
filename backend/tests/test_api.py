@@ -536,23 +536,34 @@ def test_reconcile_endpoint_chay_doc_lap(aws):
     assert any(d["rule_id"] == "agree_vendor" for d in detail["discrepancies"])
 
 
-def test_sua_tay_thi_doi_chieu_chay_lai_ngay(aws):
+def test_sua_tay_lam_bien_mat_mau_thuan_sau_khi_doi_chieu_lai(aws):
+    """Sửa tay KHÔNG còn tự đối chiếu — nhưng bấm Đối chiếu lại thì mâu thuẫn
+    do chính chỗ sửa gây ra phải biến mất.
+
+    Trước đây PATCH tự chạy đối chiếu nên test này kiểm được ngay trong response.
+    Giờ tách làm hai bước, vì đối chiếu không phải việc của thao tác review.
+    """
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
     mark_processed(created[0]["document_id"], PO_DATA)
     mark_processed(created[1]["document_id"], {**INVOICE_DATA, "vendor": "XYZ Corp"})
-    call("POST", f"/projects/{project_id}/reconcile")
+
+    truoc = call("POST", f"/projects/{project_id}/reconcile")[1]
+    assert truoc["discrepancy_count"] > 0, "vendor lệch thì phải có mâu thuẫn"
 
     status, body = call(
         "PATCH",
         f"/projects/{project_id}/documents/{created[1]['document_id']}",
         {"fields": {"vendor": "ABC Technology"}, "reviewer": "tri"},
     )
-
     assert status == 200
     assert body["validation"]["valid"] is True
     assert body["document"]["edited_fields"] == ["vendor"]
-    assert body["reconciliation"]["discrepancy_count"] == 0
+    assert "reconciliation" not in body
+
+    sau = call("POST", f"/projects/{project_id}/reconcile")[1]
+    assert sau["discrepancy_count"] == 0
+    assert sau["is_stale"] is False
 
 
 def _reconciliation_id(project_id: str) -> str:
@@ -713,3 +724,89 @@ def test_document_ids_sai_kieu_bi_tu_choi(aws, started_executions):
 
     assert status == 400
     assert started_executions == []
+
+
+# --- Sửa tay KHÔNG còn tự đối chiếu ----------------------------------------
+#
+# Sửa tay là thao tác REVIEW, không phải thao tác đối chiếu. Trước đây PATCH tự
+# chạy `run_reconciliation` — nghĩa là logic đối chiếu chạy ở ba Lambda khác
+# nhau, và `api/` buộc phải kéo `workers/` vào gói.
+#
+# Giờ PATCH chỉ lưu. Kết quả đối chiếu cũ bị đánh dấu `is_stale`, và duyệt bị
+# chặn cho tới khi chạy lại — đổi một tính chất "đúng nhờ may" thành một ràng
+# buộc được cưỡng chế.
+
+
+def _sua_tay(project_id: str, document_id: str, fields: dict) -> tuple[int, dict]:
+    return call(
+        "PATCH", f"/projects/{project_id}/documents/{document_id}",
+        {"fields": fields, "reviewer": "tri"},
+    )
+
+
+def test_patch_khong_con_tra_ve_reconciliation(aws):
+    project_id = _project_da_doi_chieu()
+    doc = call("GET", f"/projects/{project_id}")[1]["documents"][0]
+    _reconciliation_id(project_id)
+
+    status, body = _sua_tay(project_id, doc["document_id"], {"vendor": "ABC Technology"})
+
+    assert status == 200
+    assert body["document"]["edited_fields"] == ["vendor"]
+    assert "reconciliation" not in body, "PATCH thôi đối chiếu — không được trả khoá này"
+
+
+def test_sua_tay_lam_doi_chieu_thanh_cu(aws):
+    project_id = _project_da_doi_chieu()
+    doc = call("GET", f"/projects/{project_id}")[1]["documents"][0]
+    _reconciliation_id(project_id)
+
+    assert call("GET", f"/projects/{project_id}")[1]["latest_reconciliation"]["is_stale"] is False
+
+    _sua_tay(project_id, doc["document_id"], {"vendor": "ABC Technology"})
+
+    assert call("GET", f"/projects/{project_id}")[1]["latest_reconciliation"]["is_stale"] is True
+
+
+def test_khong_duyet_duoc_ket_qua_da_cu(aws):
+    """Duyệt một kết luận tính TRƯỚC lần sửa cuối là duyệt dữ liệu sai."""
+    project_id = _project_da_doi_chieu()
+    doc = call("GET", f"/projects/{project_id}")[1]["documents"][0]
+    reconciliation_id = _reconciliation_id(project_id)
+    _sua_tay(project_id, doc["document_id"], {"vendor": "ABC Technology"})
+
+    for quyet_dinh in ("APPROVED", "REJECTED"):
+        status, body = call(
+            "POST", f"/reconciliations/{reconciliation_id}/review", {"decision": quyet_dinh}
+        )
+        assert status == 409, quyet_dinh
+        assert "Đối chiếu lại" in body["error"]
+
+
+def test_doi_chieu_lai_xong_thi_duyet_duoc(aws):
+    project_id = _project_da_doi_chieu()
+    doc = call("GET", f"/projects/{project_id}")[1]["documents"][0]
+    _reconciliation_id(project_id)
+    _sua_tay(project_id, doc["document_id"], {"vendor": "ABC Technology"})
+
+    moi = _reconciliation_id(project_id)
+    assert call("GET", f"/projects/{project_id}")[1]["latest_reconciliation"]["is_stale"] is False
+
+    status, _ = call("POST", f"/reconciliations/{moi}/review", {"decision": "APPROVED"})
+    assert status == 200
+
+
+def test_api_khong_duoc_import_workers_reconcile():
+    """Đối chiếu chỉ chạy ở MỘT Lambda. `api/` gọi qua `common/reconcile_client`,
+    không import thẳng — nếu không thì gói `api-*` lại phải kéo `workers/`.
+    """
+    import pathlib
+
+    api_dir = pathlib.Path(__file__).resolve().parents[1] / "api"
+    pham = [
+        f"{p.name}:{i}"
+        for p in api_dir.glob("*.py")
+        for i, dong in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if "workers.reconcile" in dong or "from workers import" in dong
+    ]
+    assert not pham, f"api/ đang import thẳng workers: {pham}"

@@ -195,4 +195,17 @@ def install() -> dict:
         return f"arn:aws:states:local:000000000000:execution:devserver:{name}"
 
     process_module.start_execution = start_execution
+
+    # Đối chiếu: production gọi sang Lambda `recon-reconcile-dev` để cả hệ thống
+    # chỉ có MỘT chỗ chạy. moto không chạy được code của mình trong Lambda giả,
+    # nên ở đây thay bằng chính hàm mà Lambda kia sẽ chạy.
+    #
+    # Vá theo TÊN ĐÃ BIND trong từng module gọi, không vá `common.reconcile_client`
+    # — các module dùng `from ... import invoke_reconcile` nên mỗi module giữ một
+    # tham chiếu riêng.
+    import api.reconcile as reconcile_module
+
+    for module in (reconcile_module, process_module):
+        module.invoke_reconcile = workers.reconcile.run_reconciliation
+
     return plan

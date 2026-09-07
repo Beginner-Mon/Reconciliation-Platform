@@ -55,3 +55,27 @@ def started_executions(monkeypatch):
 
     monkeypatch.setattr(process_module, "start_execution", fake_start_execution)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def doi_chieu_tai_cho(monkeypatch):
+    """Đối chiếu chạy TẠI CHỖ trong test, thay vì gọi Lambda thật.
+
+    Production gọi `recon-reconcile-dev` để cả hệ thống chỉ có MỘT chỗ chạy đối
+    chiếu. moto không chạy được code của mình trong Lambda giả, nên test thay
+    lời gọi đó bằng chính hàm mà Lambda kia sẽ chạy.
+
+    Vá theo TÊN ĐÃ BIND trong từng module gọi (`api.reconcile`, `api.process`),
+    không vá `common.reconcile_client` — vì các module đó dùng
+    `from ... import invoke_reconcile`, mỗi module giữ một tham chiếu riêng.
+    Cùng cách `started_executions` vá `api.process.start_execution`.
+
+    `autouse` vì gần như test API nào cũng chạm tới đối chiếu; để tự khai thì
+    quên một chỗ là lỗi khó hiểu chứ không phải lỗi rõ ràng.
+    """
+    from workers.reconcile import run_reconciliation
+
+    for ten in ("api.reconcile", "api.process"):
+        module = __import__(ten, fromlist=["invoke_reconcile"])
+        if hasattr(module, "invoke_reconcile"):
+            monkeypatch.setattr(module, "invoke_reconcile", run_reconciliation)

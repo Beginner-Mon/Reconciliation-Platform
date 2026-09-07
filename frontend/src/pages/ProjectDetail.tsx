@@ -1,4 +1,4 @@
-import { Check, X } from "lucide-react";
+import { AlertTriangle, Check, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, ApiError, uploadFile } from "../api";
@@ -31,6 +31,8 @@ export function ProjectDetail() {
 
   const active = data?.run?.is_active ?? false;
   const reconciliation = data?.latest_reconciliation ?? null;
+  /** Sửa tay không còn tự đối chiếu, nên kết quả có thể đã lỗi thời. */
+  const stale = reconciliation?.is_stale ?? false;
   const reconciliationId = reconciliation?.reconciliation_id;
 
   const selected = useMemo(
@@ -214,6 +216,7 @@ export function ProjectDetail() {
           running={active}
           busy={busy}
           canReconcile={data.documents.some((d) => d.status === "VALIDATED")}
+          reconcileStale={stale}
           onSelect={(document) => {
             setSelectedId(document.document_id);
             if (showWorkflow && !active) setShowWorkflow(false);
@@ -299,6 +302,18 @@ export function ProjectDetail() {
                           {reconciliation.discrepancy_count} mâu thuẫn
                         </h3>
 
+                        {/* Sửa tay KHÔNG còn tự đối chiếu — nếu im lặng thì
+                            người review duyệt nhầm số cũ. Server cũng chặn
+                            duyệt, đây chỉ là chỗ nói cho người dùng biết. */}
+                        {stale && (
+                          <p className="mb-4 flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                            <AlertTriangle size={15} className="shrink-0" />
+                            Có chứng từ được sửa sau lần đối chiếu này — bấm
+                            <span className="font-medium">Đối chiếu lại</span> ở
+                            bên trái trước khi duyệt.
+                          </p>
+                        )}
+
                         {sorted.length === 0 ? (
                           <p className="flex items-center justify-center gap-2 py-12 text-center text-emerald-700"><Check size={18} />
                             Không tìm thấy mâu thuẫn nào giữa các chứng từ.
@@ -347,7 +362,8 @@ export function ProjectDetail() {
                                     () => "Đã từ chối kết quả đối soát.",
                                   )
                                 }
-                                disabled={busy || active}
+                                disabled={busy || active || stale}
+                                title={stale ? "Kết quả đã cũ — đối chiếu lại trước" : undefined}
                                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                               >
                                 Từ chối
@@ -363,7 +379,8 @@ export function ProjectDetail() {
                                     () => "Đã duyệt kết quả đối soát.",
                                   )
                                 }
-                                disabled={busy || active}
+                                disabled={busy || active || stale}
+                                title={stale ? "Kết quả đã cũ — đối chiếu lại trước" : undefined}
                                 className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                               >
                                 Duyệt kết quả đối soát

@@ -40,6 +40,7 @@ interface Props {
   running: boolean;
   busy: boolean;
   canReconcile: boolean;
+  reconcileStale: boolean;
   onSelect: (document: DocumentView) => void;
   onToggle: (documentId: string) => void;
   onToggleAll: () => void;
@@ -56,6 +57,7 @@ export function DocumentSidebar({
   running,
   busy,
   canReconcile,
+  reconcileStale,
   onSelect,
   onToggle,
   onToggleAll,
@@ -262,8 +264,16 @@ export function DocumentSidebar({
         <button
           onClick={onReconcile}
           disabled={busy || running || !canReconcile}
-          title="So các chứng từ đã xử lý với nhau. Không gọi AI, không tốn tiền."
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+          title={
+            reconcileStale
+              ? "Có chứng từ sửa sau lần đối chiếu trước — chạy lại để duyệt được"
+              : "So các chứng từ đã xử lý với nhau. Không gọi AI, không tốn tiền."
+          }
+          className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition disabled:opacity-50 ${
+            reconcileStale
+              ? "border-amber-400 bg-amber-50 font-medium text-amber-900 hover:bg-amber-100"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
         >
           <RotateCw size={14} /> Đối chiếu lại
         </button>

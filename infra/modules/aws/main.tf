@@ -293,30 +293,41 @@ locals {
       dynamodb = ["GetItem", "Query", "Scan", "PutItem"]
       s3       = ["GetObject"]
       sfn      = false
+      # Đối chiếu chạy ở MỘT Lambda duy nhất (recon-reconcile). Chỉ hai function
+      # dưới đây có đường dẫn tới nó: `review` phục vụ POST /reconcile, `process`
+      # phục vụ nhánh "không còn gì để xử lý".
+      invoke_reconcile = false
     }
     documents = {
       handler  = "api.handler.documents_handler"
       timeout  = 30
       memory   = 512
       dynamodb = ["GetItem", "Query", "PutItem", "UpdateItem"]
-      s3       = ["GetObject", "PutObject"]
-      sfn      = false
+      # PutObject: presigned POST ký bằng quyền của chính role này.
+      s3               = ["GetObject", "PutObject"]
+      sfn              = false
+      invoke_reconcile = false
     }
     review = {
       handler  = "api.handler.review_handler"
       timeout  = 30
       memory   = 512
       dynamodb = ["GetItem", "Query", "PutItem", "UpdateItem"]
-      s3       = ["GetObject", "PutObject"]
-      sfn      = false
+      # KHÔNG còn PutObject: sau khi đối chiếu dời sang Lambda riêng, không
+      # đường nào ở đây ghi S3 nữa — chỉ đọc file kết quả đối chiếu.
+      s3               = ["GetObject"]
+      sfn              = false
+      invoke_reconcile = true
     }
     process = {
       handler  = "api.handler.process_handler"
       timeout  = 30
       memory   = 512
       dynamodb = ["GetItem", "Query", "PutItem", "UpdateItem"]
-      s3       = ["GetObject", "PutObject"]
-      sfn      = true
+      # KHÔNG còn PutObject: chỉ head_object để kiểm file đã upload chưa.
+      s3               = ["GetObject"]
+      sfn              = true
+      invoke_reconcile = true
     }
   }
 }
@@ -392,6 +403,13 @@ resource "aws_iam_policy" "api" {
           Resource = ["*"]
         },
       ],
+      each.value.invoke_reconcile ? [
+        {
+          Effect   = "Allow"
+          Action   = ["lambda:InvokeFunction"]
+          Resource = [aws_lambda_function.worker["reconcile"].arn]
+        },
+      ] : [],
       each.value.sfn ? [
         {
           Effect = "Allow"
@@ -431,9 +449,13 @@ resource "aws_lambda_function" "api" {
     # STATE_MACHINE_ARN chỉ đặt cho function thật sự khởi động execution. Ba
     # function kia thiếu biến này vẫn import được: common/stepfunctions.py:7 đọc
     # bằng os.environ.get(..., "") và chỉ báo lỗi khi start_execution() bị gọi.
-    variables = each.value.sfn ? merge(local.lambda_env, {
-      STATE_MACHINE_ARN = aws_sfn_state_machine.process.arn
-    }) : local.lambda_env
+    variables = merge(
+      local.lambda_env,
+      each.value.sfn ? { STATE_MACHINE_ARN = aws_sfn_state_machine.process.arn } : {},
+      each.value.invoke_reconcile ? {
+        RECONCILE_LAMBDA_ARN = aws_lambda_function.worker["reconcile"].arn
+      } : {},
+    )
   }
 }
 

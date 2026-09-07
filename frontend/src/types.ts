@@ -134,6 +134,9 @@ export interface Reconciliation {
   discrepancy_count: number;
   severity_summary: Partial<Record<Severity, number>>;
   status: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+  /** Có chứng từ được sửa SAU lần đối chiếu này — kết luận đã lỗi thời.
+   *  Server tính, và cũng CHÍNH server chặn duyệt khi cờ này bật. */
+  is_stale?: boolean;
   review?: { decision?: string | null; reviewer?: string | null; reviewed_at?: string | null };
   discrepancies?: Discrepancy[];
 }

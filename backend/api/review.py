@@ -7,15 +7,15 @@ from common import (
     get_item,
     log_review,
     now_iso,
+    query_documents_by_project,
     update_document,
     update_item,
 )
 from core import validate_document
-from workers.reconcile import run_reconciliation
 
 from .http import json_response
 from .reconcile import must_get_reconciliation
-from .views import document_view
+from .views import da_cu, document_view
 
 EDIT_BLOCKED_FIELDS = {"document_type"}
 
@@ -81,18 +81,19 @@ def edit_document(params: dict, body: dict) -> dict:
         },
     )
 
-    record = run_reconciliation(project_id)
+    # KHÔNG đối chiếu ở đây. Sửa tay là thao tác REVIEW, không phải thao tác đối
+    # chiếu — trước đây PATCH tự chạy `run_reconciliation`, khiến cùng một logic
+    # chạy ở ba Lambda và `api/` buộc phải kéo `workers/` vào gói.
+    #
+    # Kết quả đối chiếu cũ thành `is_stale` (xem `views.reconciliation_view`) và
+    # `review_reconciliation` chặn duyệt cho tới khi chạy lại. Đổi một tính chất
+    # "đúng nhờ may" thành ràng buộc được cưỡng chế.
     document = get_item(DOCUMENTS_TABLE, {"document_id": document_id})
 
     return json_response(
         {
             "document": document_view(document, with_url=True),
             "validation": validation,
-            "reconciliation": {
-                "reconciliation_id": record["reconciliation_id"],
-                "discrepancy_count": record["discrepancy_count"],
-                "severity_summary": record["severity_summary"],
-            },
         }
     )
 
@@ -121,6 +122,15 @@ def review_reconciliation(params: dict, body: dict) -> dict:
     record = must_get_reconciliation(reconciliation_id)
     if record.get("status") != "PENDING_REVIEW":
         raise Conflict(f"Reconciliation đang ở trạng thái {record.get('status')}")
+
+    # Duyệt một kết luận tính TRƯỚC lần sửa cuối là duyệt dữ liệu đã sai. Chặn ở
+    # SERVER chứ không chỉ làm mờ nút trên giao diện — đây là quyết định nghiệp
+    # vụ được ghi vào audit_log, không được phép sai vì một request gọi tay.
+    if da_cu(record, query_documents_by_project(record["project_id"])):
+        raise Conflict(
+            "Có chứng từ được sửa sau lần đối chiếu này. Bấm Đối chiếu lại rồi "
+            "hãy duyệt."
+        )
 
     review = {
         "decision": decision,

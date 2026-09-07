@@ -16,7 +16,7 @@ from common import (
     update_item,
 )
 from common.stepfunctions import start_execution
-from workers.reconcile import run_reconciliation
+from common.reconcile_client import invoke_reconcile
 
 from .http import json_response
 from .projects import must_get_project
@@ -224,7 +224,7 @@ def process_project(params: dict, body: dict) -> dict:
 
     if not targets:
         _audit_decision(project_id, None, targets, skipped, force, force_edited, engine)
-        record = run_reconciliation(project_id)
+        record = invoke_reconcile(project_id)
         return json_response(
             {
                 "project_id": project_id,

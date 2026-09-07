@@ -92,3 +92,28 @@ def progress_view(documents: list[dict]) -> dict:
         "done_steps": done_steps,
         "progress_percent": round(done_steps * 100 / total_steps) if total_steps else 100,
     }
+
+
+def da_cu(reconciliation: dict, documents: list[dict]) -> bool:
+    """Kết quả đối chiếu này có bị lỗi thời không.
+
+    Cũ = có chứng từ nào được sửa SAU khi đối chiếu chạy. Trước đây không cần
+    khái niệm này vì `PATCH` tự chạy lại đối chiếu — nhưng đó là việc không
+    thuộc về nó, và nó khiến cùng một logic chạy ở ba Lambda.
+
+    KHÔNG cần thêm trường lưu trữ nào: `updated_at` được đóng dấu ở MỌI chỗ sửa
+    document (`api/documents.py` lúc tạo, `api/process.py` lúc xếp hàng,
+    `workers/steps.py` mỗi bước, `api/review.py` lúc sửa tay), và `now_iso()`
+    trả ISO nên so chuỗi ra đúng thứ tự thời gian.
+    """
+    if not reconciliation:
+        return False
+    moi_nhat = max((d.get("updated_at") or "" for d in documents), default="")
+    return moi_nhat > (reconciliation.get("created_at") or "")
+
+
+def reconciliation_view(reconciliation: dict | None, documents: list[dict]) -> dict | None:
+    """Bản ghi đối chiếu kèm cờ `is_stale` cho giao diện."""
+    if not reconciliation:
+        return None
+    return {**reconciliation, "is_stale": da_cu(reconciliation, documents)}

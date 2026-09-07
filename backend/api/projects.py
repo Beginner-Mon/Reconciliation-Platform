@@ -13,7 +13,7 @@ from common import (
 from common.dynamodb import scan_table
 
 from .http import json_response
-from .views import document_view, progress_view
+from .views import document_view, progress_view, reconciliation_view
 
 
 def must_get_project(project_id: str) -> dict:
@@ -73,6 +73,6 @@ def get_project(params: dict, body: dict) -> dict:
             "run": run,
             "progress": progress_view(documents),
             "documents": [document_view(d, with_url=True) for d in documents],
-            "latest_reconciliation": reconciliation,
+            "latest_reconciliation": reconciliation_view(reconciliation, documents),
         }
     )
