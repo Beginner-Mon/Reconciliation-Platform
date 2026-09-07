@@ -44,6 +44,7 @@ module "aws" {
   gcp_docai_processor_id = var.gcp_docai_processor_id
   gemini_model           = var.gemini_model
   gemini_api_key         = var.gemini_api_key
+  ocr_engine             = var.ocr_engine
   gcp_sa_key_json        = base64decode(module.gcp.sa_private_key)
   frontend_origins       = var.frontend_origins
 }

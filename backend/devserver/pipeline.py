@@ -131,9 +131,13 @@ def run_local(payload: dict, plan: dict | None = None) -> None:
 
     try:
         for document in payload.get("documents", []):
+            # Phải khớp KHOÁ-ĐỔI-KHOÁ với `ItemSelector` của Map trong
+            # statemachine.asl.json — lệch một khoá là dev chạy một đằng cloud
+            # chạy một nẻo. test_devserver.py so hai bên với nhau.
             event = {
                 "project_id": project_id,
                 "run_id": run_id,
+                "ocr_engine": payload.get("ocr_engine"),
                 "document_id": document["document_id"],
                 "s3_key": document["s3_key"],
             }

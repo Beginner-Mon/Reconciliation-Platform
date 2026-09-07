@@ -6,13 +6,13 @@ import { DiscrepancyCard } from "../components/DiscrepancyCard";
 import { DocumentSidebar } from "../components/DocumentSidebar";
 import { DocumentViewer } from "../components/DocumentViewer";
 import { EditPanel } from "../components/EditPanel";
-import { OcrPanel } from "../components/OcrPanel";
+import { ExtractionPanel } from "../components/ExtractionPanel";
 import { WorkflowView } from "../components/WorkflowView";
 import { SEVERITY_ORDER } from "../format";
 import { useProject } from "../hooks/useProject";
-import type { Discrepancy } from "../types";
+import type { Discrepancy, DocumentView, OcrEngineChoice } from "../types";
 
-type TabKey = "document" | "ocr" | "flags" | "edit";
+type TabKey = "document" | "extract" | "flags" | "edit";
 
 export function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -26,6 +26,8 @@ export function ProjectDetail() {
   const [discrepancies, setDiscrepancies] = useState<Discrepancy[]>([]);
   /** Khung phải chuyển sang màn hình tiến trình khi bấm Xử lý, ở đó tới khi xong. */
   const [showWorkflow, setShowWorkflow] = useState(false);
+  const [engines, setEngines] = useState<OcrEngineChoice[]>([]);
+  const [defaultEngine, setDefaultEngine] = useState<string | null>(null);
 
   const active = data?.run?.is_active ?? false;
   const reconciliation = data?.latest_reconciliation ?? null;
@@ -35,6 +37,23 @@ export function ProjectDetail() {
     () => data?.documents.find((d) => d.document_id === selectedId) ?? null,
     [data, selectedId],
   );
+
+  // Nhãn, giá và cảnh báo tiếng Việt của engine lấy TỪ BACKEND, không khai lại
+  // bên này — hai bản sao rồi sẽ lệch nhau. Cấu hình tĩnh nên lấy một lần.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listOcrEngines()
+      .then((list) => {
+        if (cancelled) return;
+        setEngines(list.engines);
+        setDefaultEngine(list.default);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Chọn sẵn file đầu tiên cho đỡ phải bấm.
   useEffect(() => {
@@ -123,6 +142,43 @@ export function ProjectDetail() {
     );
   }
 
+  /** Chạy lại ĐÚNG một chứng từ với engine đã chọn.
+   *
+   *  `force` là bắt buộc: chứng từ đã VALIDATED bị `/process` bỏ qua — đó chính
+   *  là cơ chế cache tiết kiệm tiền. Nút này cố ý bỏ qua cache, nên phải nói rõ
+   *  là tốn tiền.
+   */
+  async function rerun(document: DocumentView, engine: string) {
+    if (!projectId) return;
+
+    // `force_edited` cho AI ghi đè công review và KHÔNG lấy lại được. Hỏi trước.
+    const edited = document.edited_fields ?? [];
+    if (
+      edited.length > 0 &&
+      !window.confirm(
+        `"${document.file_name}" đã sửa tay (${edited.join(", ")}).\n\n` +
+          `Chạy lại sẽ ghi đè bằng dữ liệu AI và không lấy lại được. Tiếp tục?`,
+      )
+    ) {
+      return;
+    }
+
+    setShowWorkflow(true);
+    await run(
+      async () => {
+        const result = await api.process(projectId, {
+          document_ids: [document.document_id],
+          force: true,
+          force_edited: true,
+          engine,
+        });
+        await startPolling();
+        return result;
+      },
+      () => `Đang chạy lại ${document.file_name} bằng ${engine}.`,
+    );
+  }
+
   if (loading) return <p className="p-8 text-center text-slate-500">Đang tải…</p>;
   if (error && !data) {
     return (
@@ -145,7 +201,7 @@ export function ProjectDetail() {
 
   const TABS: { key: TabKey; label: string; badge?: number }[] = [
     { key: "document", label: "Tài liệu" },
-    { key: "ocr", label: "Kết quả OCR" },
+    { key: "extract", label: "Trích xuất" },
     { key: "flags", label: "Cảnh báo", badge: reconciliation?.discrepancy_count },
     { key: "edit", label: "Sửa" },
   ];
@@ -160,12 +216,15 @@ export function ProjectDetail() {
           selectedId={selectedId}
           running={active}
           busy={busy}
+          engines={engines}
+          defaultEngine={defaultEngine}
           onSelect={(document) => {
             setSelectedId(document.document_id);
             if (showWorkflow && !active) setShowWorkflow(false);
           }}
           onUpload={upload}
           onProcess={process}
+          onRerun={rerun}
         />
 
         {/* Khung phải — mọi thứ về xử lý và xem kết quả đều ở đây */}
@@ -206,7 +265,7 @@ export function ProjectDetail() {
 
               <div className="min-h-0 flex-1 overflow-y-auto">
                 {tab === "document" && <DocumentViewer document={selected} />}
-                {tab === "ocr" && <OcrPanel document={selected} />}
+                {tab === "extract" && <ExtractionPanel document={selected} />}
                 {tab === "edit" && (
                   <EditPanel
                     document={selected}

@@ -3,7 +3,7 @@ from datetime import date
 
 from pydantic import BaseModel
 
-from schemas import DATE_FIELD_BY_TYPE, DOCUMENT_TYPE_LABELS
+from schemas import DATE_FIELD_BY_TYPE, DOCUMENT_TYPE_LABELS, NUMBER_FIELD_BY_TYPE
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -170,7 +170,185 @@ def _is_priced(doc: DocumentRef) -> bool:
     return bool(items) and hasattr(items[0], "unit_price")
 
 
+# --- Cộng dồn cho đối chiếu n–m ---------------------------------------------
+#
+# Một đơn hàng giao nhiều đợt sinh nhiều hóa đơn. So từng cặp thì đợt nào cũng
+# nhỏ hơn đơn hàng và rule nào cũng báo lệch. Phải cộng TỔNG theo vai trò.
+
+
+def _quantity_by_name(docs: list[DocumentRef]) -> dict[str, float]:
+    """Tổng số lượng theo tên mặt hàng, gộp qua NHIỀU chứng từ.
+
+    Khác `_items_by_name`: hàm kia trả về item cuối cùng gặp (dùng để so đôi
+    một), ở đây phải cộng dồn chứ không ghi đè.
+    """
+    totals: dict[str, float] = {}
+    for doc in docs:
+        for item in doc.get("items") or []:
+            name = item.item_name.lower().strip()
+            totals[name] = totals.get(name, 0) + (item.quantity or 0)
+    return totals
+
+
+def _item_quantity(doc: DocumentRef, key: str) -> float:
+    return sum(
+        item.quantity or 0
+        for item in doc.get("items") or []
+        if item.item_name.lower().strip() == key
+    )
+
+
+def _display_name(docs: list[DocumentRef], key: str) -> str:
+    """Tên gốc để hiện cho người đọc — khoá gộp đã bị lowercase/strip."""
+    for doc in docs:
+        for item in doc.get("items") or []:
+            if item.item_name.lower().strip() == key:
+                return item.item_name
+    return key
+
+
+def _side(docs: list[DocumentRef], total: float) -> str:
+    kinds = " + ".join(sorted({label(d.document_type) for d in docs}))
+    return f"{kinds} {_fmt(total)} ({len(docs)} chứng từ)"
+
+
+class AggregateRule(Rule):
+    """ĐẲNG THỨC trên tổng: sum(nguồn) phải khớp sum(đích).
+
+    "Nguồn/đích" là vai trò của rule này, không phải nhãn cố định của loại chứng
+    từ — cùng một loại có thể là đích ở rule này và nguồn ở rule khác.
+
+    Chạy đúng cả khi n=1, m=1: tổng của một phần tử là chính nó.
+    """
+
+    def __init__(
+        self,
+        sources: list[str],
+        targets: list[str],
+        field_name: str,
+        rule_id: str,
+        tolerance: float = 0,
+        severity: str = "high",
+    ):
+        self.sources = sources
+        self.targets = targets
+        self.field_name = field_name
+        self.rule_id = rule_id
+        self.tolerance = tolerance
+        self.severity = severity
+
+    def _collect(self, group: DocumentGroup, types: list[str]):
+        docs = [
+            doc
+            for document_type in types
+            for doc in group.by_type(document_type)
+            if isinstance(doc.get(self.field_name), (int, float))
+        ]
+        return docs, sum(doc.get(self.field_name) for doc in docs)
+
+    def evaluate(self, group: DocumentGroup) -> list[Discrepancy]:
+        sources, source_total = self._collect(group, self.sources)
+        targets, target_total = self._collect(group, self.targets)
+        if not sources or not targets:
+            return []
+
+        difference = target_total - source_total
+        if abs(difference) <= self.tolerance:
+            return []
+
+        return [
+            Discrepancy(
+                rule_id=self.rule_id,
+                field=self.field_name,
+                severity=self.severity,
+                values=[
+                    DiscrepancyValue(d.document_id, d.document_type, d.get(self.field_name))
+                    for d in sources + targets
+                ],
+                difference=difference,
+                explanation=(
+                    f"Tổng {self.field_name} không khớp: "
+                    f"{_side(sources, source_total)} so với "
+                    f"{_side(targets, target_total)} — lệch {_fmt(difference)}"
+                ),
+            )
+        ]
+
+
+class CoverageRule(Rule):
+    """BẤT ĐẲNG THỨC trên tổng số lượng: `more` không được vượt `less`.
+
+    Giao thiếu là bình thường trong mua bán, nên chỉ báo khi VƯỢT — khác hẳn
+    AggregateRule vốn đòi bằng nhau.
+
+    `missing_is_zero=True`: mặt hàng có ở `more` mà không có ở `less` thì coi
+    như `less` bằng 0 và báo (xuất hóa đơn cho thứ chưa hề nghiệm thu).
+    `False`: bỏ qua (nghiệm thu thứ ngoài đơn hàng là chuyện khác, không phải
+    việc của rule này).
+    """
+
+    def __init__(
+        self,
+        more: str,
+        less: str,
+        rule_id: str,
+        severity: str,
+        more_verb: str,
+        less_verb: str,
+        missing_is_zero: bool = True,
+    ):
+        self.more = more
+        self.less = less
+        self.rule_id = rule_id
+        self.severity = severity
+        self.more_verb = more_verb
+        self.less_verb = less_verb
+        self.missing_is_zero = missing_is_zero
+
+    def evaluate(self, group: DocumentGroup) -> list[Discrepancy]:
+        more_docs = group.by_type(self.more)
+        less_docs = group.by_type(self.less)
+        if not more_docs or not less_docs:
+            return []
+
+        more_totals = _quantity_by_name(more_docs)
+        less_totals = _quantity_by_name(less_docs)
+
+        found: list[Discrepancy] = []
+        for name, quantity in more_totals.items():
+            if name not in less_totals and not self.missing_is_zero:
+                continue
+            allowed = less_totals.get(name, 0)
+            if quantity <= allowed:
+                continue
+            display = _display_name(more_docs, name)
+            found.append(
+                Discrepancy(
+                    rule_id=self.rule_id,
+                    field=f"items.{display}.quantity",
+                    severity=self.severity,
+                    values=[
+                        DiscrepancyValue(d.document_id, d.document_type, _item_quantity(d, name))
+                        for d in less_docs + more_docs
+                    ],
+                    difference=quantity - allowed,
+                    explanation=(
+                        f"'{display}': {self.more_verb} tổng {_fmt(quantity)} "
+                        f"nhưng {self.less_verb} tổng {_fmt(allowed)}"
+                    ),
+                )
+            )
+        return found
+
+
 class LineItemRule(Rule):
+    """So ĐƠN GIÁ và DANH MỤC mặt hàng. Số lượng do `CoverageRule` lo.
+
+    Đơn giá phải bằng nhau bất kể chia bao nhiêu đợt giao, nên vẫn so trực tiếp.
+    Số lượng thì KHÔNG được so đôi một: giao hàng từng phần là bình thường, và
+    bản cũ so từng hóa đơn với `priced[0]` nên đợt giao nào cũng báo lệch.
+    """
+
     rule_id = "line_item_match"
     severity = "high"
 
@@ -178,137 +356,87 @@ class LineItemRule(Rule):
         priced = [d for d in group.documents if _is_priced(d)]
         if len(priced) < 2:
             return []
+        return self._unit_price(priced) + self._catalogue(group)
 
-        base = priced[0]
+    def _unit_price(self, priced: list[DocumentRef]) -> list[Discrepancy]:
+        holders: dict[str, list[tuple[DocumentRef, float]]] = {}
+        for doc in priced:
+            for name, item in _items_by_name(doc).items():
+                price = getattr(item, "unit_price", None)
+                if price is not None:
+                    holders.setdefault(name, []).append((doc, price))
+
         found: list[Discrepancy] = []
-        base_items = _items_by_name(base)
-
-        for other in priced[1:]:
-            other_items = _items_by_name(other)
-
-            for name, item in base_items.items():
-                counterpart = other_items.get(name)
-                if counterpart is None:
-                    found.append(
-                        Discrepancy(
-                            rule_id="line_item_missing",
-                            field=f"items.{item.item_name}",
-                            severity="high",
-                            values=[
-                                DiscrepancyValue(base.document_id, base.document_type, item.quantity),
-                                DiscrepancyValue(other.document_id, other.document_type, None),
-                            ],
-                            explanation=(
-                                f"Mặt hàng '{item.item_name}' có trong {label(base.document_type)} "
-                                f"nhưng thiếu trong {label(other.document_type)}"
-                            ),
-                        )
-                    )
-                    continue
-                for attr, severity in (("unit_price", "high"), ("quantity", "high")):
-                    left = getattr(item, attr, None)
-                    right = getattr(counterpart, attr, None)
-                    if left is None or right is None or left == right:
-                        continue
-                    found.append(
-                        Discrepancy(
-                            rule_id=f"line_item_{attr}",
-                            field=f"items.{item.item_name}.{attr}",
-                            severity=severity,
-                            values=[
-                                DiscrepancyValue(base.document_id, base.document_type, left),
-                                DiscrepancyValue(other.document_id, other.document_type, right),
-                            ],
-                            difference=right - left,
-                            explanation=(
-                                f"'{item.item_name}' lệch {attr}: "
-                                f"{label(base.document_type)}={_fmt(left)}, "
-                                f"{label(other.document_type)}={_fmt(right)}"
-                            ),
-                        )
-                    )
-
-            for name, item in other_items.items():
-                if name in base_items:
-                    continue
-                found.append(
-                    Discrepancy(
-                        rule_id="line_item_extra",
-                        field=f"items.{item.item_name}",
-                        severity="high",
-                        values=[
-                            DiscrepancyValue(base.document_id, base.document_type, None),
-                            DiscrepancyValue(other.document_id, other.document_type, item.quantity),
-                        ],
-                        explanation=(
-                            f"Mặt hàng '{item.item_name}' có trong {label(other.document_type)} "
-                            f"nhưng không có trong {label(base.document_type)}"
-                        ),
-                    )
+        for name, entries in holders.items():
+            prices = {price for _, price in entries}
+            if len(prices) < 2:
+                continue
+            display = _display_name(priced, name)
+            rendered = " / ".join(
+                f"{label(d.document_type)}={_fmt(p)}" for d, p in entries
+            )
+            found.append(
+                Discrepancy(
+                    rule_id="line_item_unit_price",
+                    field=f"items.{display}.unit_price",
+                    severity="high",
+                    values=[DiscrepancyValue(d.document_id, d.document_type, p) for d, p in entries],
+                    difference=max(prices) - min(prices),
+                    explanation=f"'{display}' lệch đơn giá: {rendered}",
                 )
-
+            )
         return found
 
+    def _catalogue(self, group: DocumentGroup) -> list[Discrepancy]:
+        """Mặt hàng có ở bên này mà không có ở bên kia — so theo TẬP HỢP gộp.
 
-class QuantityCoverageRule(Rule):
-    rule_id = "quantity_coverage"
-    severity = "critical"
-
-    def evaluate(self, group: DocumentGroup) -> list[Discrepancy]:
-        acceptance = group.first("acceptance_record")
-        invoice = group.first("invoice")
-        purchase_order = group.first("purchase_order")
-        if acceptance is None or invoice is None:
+        Gộp trước rồi mới so, nếu không thì hóa đơn đợt 1 thiếu mặt hàng của
+        đợt 2 sẽ bị báo nhầm là "thiếu mặt hàng".
+        """
+        ordered_docs = group.by_type("purchase_order")
+        invoiced_docs = group.by_type("invoice")
+        if not ordered_docs or not invoiced_docs:
             return []
 
-        accepted = _items_by_name(acceptance)
-        invoiced = _items_by_name(invoice)
-        ordered = _items_by_name(purchase_order) if purchase_order else {}
+        ordered = _quantity_by_name(ordered_docs)
+        invoiced = _quantity_by_name(invoiced_docs)
         found: list[Discrepancy] = []
 
-        for name, invoice_item in invoiced.items():
-            accepted_item = accepted.get(name)
-            accepted_qty = accepted_item.quantity if accepted_item else 0
-            if invoice_item.quantity > accepted_qty:
-                found.append(
-                    Discrepancy(
-                        rule_id="invoiced_over_accepted",
-                        field=f"items.{invoice_item.item_name}.quantity",
-                        severity="critical",
-                        values=[
-                            DiscrepancyValue(acceptance.document_id, "acceptance_record", accepted_qty),
-                            DiscrepancyValue(invoice.document_id, "invoice", invoice_item.quantity),
-                        ],
-                        difference=invoice_item.quantity - accepted_qty,
-                        explanation=(
-                            f"'{invoice_item.item_name}': xuất hóa đơn {_fmt(invoice_item.quantity)} "
-                            f"nhưng chỉ nghiệm thu {_fmt(accepted_qty)}"
-                        ),
-                    )
+        for name in ordered.keys() - invoiced.keys():
+            display = _display_name(ordered_docs, name)
+            found.append(
+                Discrepancy(
+                    rule_id="line_item_missing",
+                    field=f"items.{display}",
+                    severity="high",
+                    values=[
+                        DiscrepancyValue(d.document_id, d.document_type, _item_quantity(d, name))
+                        for d in ordered_docs
+                    ],
+                    explanation=(
+                        f"Mặt hàng '{display}' có trong đơn đặt hàng "
+                        f"nhưng không có trong hóa đơn nào"
+                    ),
                 )
+            )
 
-        for name, accepted_item in accepted.items():
-            ordered_item = ordered.get(name)
-            if ordered_item is None:
-                continue
-            if accepted_item.quantity > ordered_item.quantity:
-                found.append(
-                    Discrepancy(
-                        rule_id="accepted_over_ordered",
-                        field=f"items.{accepted_item.item_name}.quantity",
-                        severity="high",
-                        values=[
-                            DiscrepancyValue(purchase_order.document_id, "purchase_order", ordered_item.quantity),
-                            DiscrepancyValue(acceptance.document_id, "acceptance_record", accepted_item.quantity),
-                        ],
-                        difference=accepted_item.quantity - ordered_item.quantity,
-                        explanation=(
-                            f"'{accepted_item.item_name}': nghiệm thu {_fmt(accepted_item.quantity)} "
-                            f"vượt số lượng đặt hàng {_fmt(ordered_item.quantity)}"
-                        ),
-                    )
+        for name in invoiced.keys() - ordered.keys():
+            display = _display_name(invoiced_docs, name)
+            found.append(
+                Discrepancy(
+                    rule_id="line_item_extra",
+                    field=f"items.{display}",
+                    severity="high",
+                    values=[
+                        DiscrepancyValue(d.document_id, d.document_type, _item_quantity(d, name))
+                        for d in invoiced_docs
+                    ],
+                    explanation=(
+                        f"Mặt hàng '{display}' có trong hóa đơn "
+                        f"nhưng không có trong đơn đặt hàng nào"
+                    ),
                 )
-
+            )
         return found
 
 
@@ -319,36 +447,51 @@ class DateOrderRule(Rule):
     def __init__(self, sequence: list[str] | None = None):
         self.sequence = sequence or ["purchase_order", "acceptance_record", "invoice"]
 
+    def _dated(self, group: DocumentGroup, document_type: str) -> list[tuple[DocumentRef, date]]:
+        field_name = DATE_FIELD_BY_TYPE.get(document_type, "")
+        return [
+            (doc, doc.get(field_name))
+            for doc in group.by_type(document_type)
+            if isinstance(doc.get(field_name), date)
+        ]
+
     def evaluate(self, group: DocumentGroup) -> list[Discrepancy]:
-        points = []
-        for document_type in self.sequence:
-            doc = group.first(document_type)
-            if doc is None:
-                continue
-            value = doc.get(DATE_FIELD_BY_TYPE.get(document_type, ""))
-            if isinstance(value, date):
-                points.append((doc, value))
+        # Mỗi giai đoạn có thể có NHIỀU chứng từ; lấy mốc sớm nhất làm chuẩn rồi
+        # soi từng chứng từ giai đoạn sau. Bản cũ dùng first() nên chỉ kiểm được
+        # đúng một chứng từ mỗi giai đoạn.
+        stages = [
+            (document_type, dated)
+            for document_type in self.sequence
+            if (dated := self._dated(group, document_type))
+        ]
 
         found: list[Discrepancy] = []
-        for (earlier_doc, earlier), (later_doc, later) in zip(points, points[1:]):
-            if earlier <= later:
-                continue
-            found.append(
-                Discrepancy(
-                    rule_id=self.rule_id,
-                    field="date_order",
-                    severity=self.severity,
-                    values=[
-                        DiscrepancyValue(earlier_doc.document_id, earlier_doc.document_type, earlier.isoformat()),
-                        DiscrepancyValue(later_doc.document_id, later_doc.document_type, later.isoformat()),
-                    ],
-                    difference=(earlier - later).days,
-                    explanation=(
-                        f"Ngày {label(later_doc.document_type)} ({later.isoformat()}) "
-                        f"sớm hơn ngày {label(earlier_doc.document_type)} ({earlier.isoformat()})"
-                    ),
+        for (_, earlier_docs), (_, later_docs) in zip(stages, stages[1:]):
+            earliest_doc, earliest = min(earlier_docs, key=lambda pair: pair[1])
+            for later_doc, later in later_docs:
+                if earliest <= later:
+                    continue
+                found.append(
+                    Discrepancy(
+                        rule_id=self.rule_id,
+                        field="date_order",
+                        severity=self.severity,
+                        values=[
+                            DiscrepancyValue(
+                                earliest_doc.document_id, earliest_doc.document_type, earliest.isoformat()
+                            ),
+                            DiscrepancyValue(
+                                later_doc.document_id, later_doc.document_type, later.isoformat()
+                            ),
+                        ],
+                        difference=(earliest - later).days,
+                        explanation=(
+                            f"Ngày {label(later_doc.document_type)} ({later.isoformat()}) "
+                            f"sớm hơn ngày {label(earliest_doc.document_type)} sớm nhất "
+                            f"({earliest.isoformat()})"
+                        ),
+                    )
                 )
-            )
         return found
 
 
@@ -359,7 +502,7 @@ class ReferenceExistsRule(Rule):
     def evaluate(self, group: DocumentGroup) -> list[Discrepancy]:
         if group.key is None:
             return []
-        if group.first("purchase_order") is not None:
+        if group.by_type("purchase_order"):
             return []
         referrers = [d for d in group.documents if d.has("po_number")]
         if not referrers:
@@ -379,14 +522,101 @@ class ReferenceExistsRule(Rule):
         ]
 
 
+class DuplicateNumberRule(Rule):
+    """Hai chứng từ CÙNG LOẠI mang cùng số hiệu nghiệp vụ.
+
+    Việc cộng tổng n–m khiến upload trùng nguy hiểm hơn trước: hai bản của cùng
+    một hóa đơn được cộng vào nhau như hai đợt giao khác nhau. Rule tiền có thể
+    nổ, nhưng nó chỉ sai chỗ — người review đi tìm ai đòi thừa tiền trong khi
+    vấn đề thật là bấm upload hai lần.
+
+    BÁO CHỨ KHÔNG CHẶN: một PO sửa đổi hợp lệ có thể giữ nguyên số hiệu, và chỉ
+    người mới biết bản nào là bản đúng.
+
+    Số hiệu đọc từ `NUMBER_FIELD_BY_TYPE` của registry nên rule không hardcode
+    loại nào — thêm loại chứng từ thứ tư là nó tự có kiểm trùng.
+    """
+
+    rule_id = "trung_so_hieu"
+    severity = "medium"
+
+    def evaluate(self, group: DocumentGroup) -> list[Discrepancy]:
+        # Khoá gồm CẢ LOẠI: hóa đơn ghi po_number trùng số PO là THAM CHIẾU
+        # hợp lệ, không phải trùng lặp.
+        seen: dict[tuple[str, str], list[DocumentRef]] = {}
+        for doc in group.documents:
+            field_name = NUMBER_FIELD_BY_TYPE.get(doc.document_type)
+            if not field_name:
+                continue
+            number = doc.get(field_name)
+            if not number:
+                continue
+            seen.setdefault((doc.document_type, str(number)), []).append(doc)
+
+        return [
+            Discrepancy(
+                rule_id=self.rule_id,
+                field=NUMBER_FIELD_BY_TYPE[document_type],
+                severity=self.severity,
+                values=[DiscrepancyValue(d.document_id, d.document_type, number) for d in docs],
+                difference=len(docs),
+                explanation=(
+                    f"Có {len(docs)} {label(document_type)} cùng số hiệu {number} — "
+                    "có thể là upload trùng hoặc bản sửa đổi chưa đánh dấu"
+                ),
+            )
+            for (document_type, number), docs in seen.items()
+            if len(docs) > 1
+        ]
+
+
+TOTAL_AMOUNT_FIELD = "total_amount"
+
+
+def _total_amount_rule(rule_id: str, severity: str = "critical") -> AggregateRule:
+    """Đơn đặt hàng cam kết bao nhiêu thì hóa đơn đòi đúng bấy nhiêu — tính TỔNG.
+
+    Dùng lại được ở hai tầng: trong từng nhóm po_number, và trên toàn project.
+    """
+    return AggregateRule(
+        sources=["purchase_order"],
+        targets=["invoice"],
+        field_name=TOTAL_AMOUNT_FIELD,
+        rule_id=rule_id,
+        severity=severity,
+    )
+
+
 CROSS_RULES: list[Rule] = [
     AgreeRule("vendor", severity="critical"),
     AgreeRule("currency", severity="critical"),
     AgreeRule("vendor_tax_code", severity="medium"),
     AgreeRule("buyer", severity="medium"),
-    NumericRule("total_amount", severity="high"),
+    _total_amount_rule("aggregate_total_amount"),
     LineItemRule(),
-    QuantityCoverageRule(),
+    # Chuỗi nghiệp vụ: hóa đơn ≤ nghiệm thu ≤ đặt hàng. Chỉ báo khi VƯỢT.
+    CoverageRule(
+        more="invoice",
+        less="acceptance_record",
+        rule_id="invoiced_over_accepted",
+        severity="critical",
+        more_verb="xuất hóa đơn",
+        less_verb="nghiệm thu",
+    ),
+    CoverageRule(
+        more="acceptance_record",
+        less="purchase_order",
+        rule_id="accepted_over_ordered",
+        severity="high",
+        more_verb="nghiệm thu",
+        less_verb="đặt hàng",
+        # Nghiệm thu thứ ngoài đơn hàng là vấn đề khác, không phải việc của rule này.
+        missing_is_zero=False,
+    ),
     DateOrderRule(),
     ReferenceExistsRule(),
+    DuplicateNumberRule(),
 ]
+
+# Chạy MỘT LẦN trên toàn bộ chứng từ của project, bỏ qua ranh giới nhóm.
+PROJECT_RULES: list[Rule] = [_total_amount_rule("project_total_amount")]

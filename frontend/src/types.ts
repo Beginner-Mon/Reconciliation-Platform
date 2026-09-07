@@ -68,6 +68,9 @@ export interface DocumentView {
   attempt?: number;
   document_type?: DocumentType;
   po_number?: string;
+  /** Engine OCR đã chạy cho chứng từ NÀY — chọn được theo từng lần chạy nên
+   *  hai chứng từ trong cùng project có thể khác nhau. */
+  ocr_engine?: string;
   extraction?: Extraction;
   /** confidence THẬT từ OCR — dùng để tô trường AI đọc không chắc. */
   confidence?: Record<string, number>;
@@ -175,4 +178,33 @@ export interface ProcessResult {
   processing: DocumentView[];
   skipped: { document_id: string; file_name: string; reason: string }[];
   message?: string;
+}
+
+/** Một engine OCR mà giao diện được phép chọn.
+ *
+ *  Nhãn, giá và cảnh báo tiếng Việt lấy từ `GET /ocr-engines` chứ KHÔNG khai
+ *  lại ở đây: hai bản sao rồi sẽ lệch nhau, và đó đúng là cách ước tính chi phí
+ *  từng lệch 20 lần.
+ */
+export interface OcrEngineChoice {
+  name: string;
+  note: string;
+  cloud: "google" | "aws";
+  usd_per_page: number;
+  supports_vietnamese: boolean;
+}
+
+export interface OcrEngineList {
+  default: string;
+  engines: OcrEngineChoice[];
+}
+
+export interface ProcessOptions {
+  /** Bỏ trống = cả project. Có giá trị = chỉ những chứng từ này. */
+  document_ids?: string[];
+  /** Chứng từ đã VALIDATED bị bỏ qua nếu không có cờ này — đó là cache. */
+  force?: boolean;
+  /** Ghi đè cả chứng từ đã sửa tay. XOÁ công review, phải hỏi trước. */
+  force_edited?: boolean;
+  engine?: string;
 }

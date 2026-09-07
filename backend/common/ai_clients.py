@@ -57,6 +57,14 @@ RATE_LIMIT_MARKERS = (
     "too many requests",
     "503",
     "unavailable",
+    # AWS (Textract) gọi tên khác hẳn Google. Thiếu mấy chuỗi này thì throttle
+    # không thành RateLimitError, và nhánh Retry ErrorEquals ["RateLimitError"]
+    # trong statemachine.asl.json không bao giờ chạy — chứng từ chết luôn thay
+    # vì được thử lại. Map chạy 3 doc song song nên bị throttle là chuyện thường.
+    "throttl",
+    "provisionedthroughputexceeded",
+    "limitexceeded",
+    "rate exceeded",
 )
 
 
@@ -165,6 +173,22 @@ def _parse_documentai(doc) -> dict:
                     }
                     for line in (page.lines or [])
                 ],
+                # Khối ngữ nghĩa, đến kèm CÙNG response đã trả tiền — trước đây
+                # bị vứt đi vì parser chỉ đọc `lines`.
+                #
+                # Vì sao cần: text phẳng của Document AI xếp theo thứ tự đọc nên
+                # trộn lẫn các khối. Đo trên chứng từ thật, chữ trong logo
+                # ("COSCO SHIPPING") chen vào GIỮA khối địa chỉ bên nhận hàng —
+                # không phải nhiễu mà là cấu trúc bị phá, đủ để giá trị bị gán
+                # nhầm nhãn. Với `blocks`, tên công ty và toàn bộ địa chỉ dính
+                # liền một khối, logo tách thành khối riêng.
+                #
+                # Đã thử `paragraphs`: KHÔNG tách được logo (vẫn là hai khối rời
+                # nằm giữa địa chỉ), nên không giữ.
+                "blocks": [
+                    _layout_text(block.layout, text)
+                    for block in (getattr(page, "blocks", []) or [])
+                ],
                 "tables": [
                     {
                         "rows": [
@@ -255,11 +279,29 @@ def ocr_with_layout_parser(content: bytes, mime_type: str = OCR_MIME_TYPE) -> di
 def _build_ocr_text(ocr_json: dict) -> str:
     """Gộp output OCR thành prompt cho Gemini.
 
+    Dùng `blocks` thay cho `text` phẳng: text phẳng xếp theo thứ tự đọc nên trộn
+    lẫn các khối cạnh nhau, còn `blocks` giữ tên công ty và địa chỉ dính liền.
+    Đo trên chứng từ thật: text phẳng có 45–50% dòng chỉ MỘT TỪ.
+
+    KHÔNG gửi cả hai — mỗi trang sẽ đi hai lần và tiền token gấp đôi. Rơi về
+    `text` khi không có blocks: `gemini_direct` không qua OCR, Layout Parser trả
+    `chunks` chứ không trả page.
+
     Bảng được giữ dạng markdown có header thay vì nối phẳng bằng '|', và được
     đánh dấu rõ ranh giới — nếu không, cấu trúc bảng mà Form Parser tách ra
     (thứ đắt nhất mình trả tiền) sẽ bị làm phẳng trước khi Gemini nhìn thấy.
     """
-    parts = [ocr_json.get("text", "")]
+    # PHẢI gộp khoảng trắng bên trong từng khối. `_layout_text` cắt chuỗi nguyên
+    # văn nên block giữ luôn '\n' bên trong; nối chúng lại bằng '\n' sẽ tái tạo
+    # Y HỆT text phẳng — đo trên chứng từ thật ra chênh 0,0%, tức vô nghĩa.
+    # Ép mỗi khối về một dòng thì ranh giới khối mới nhìn thấy được.
+    blocks = [
+        " ".join(block.split())
+        for page in ocr_json.get("pages") or []
+        for block in (page.get("blocks") or [])
+        if block.strip()
+    ]
+    parts = blocks or [ocr_json.get("text", "")]
 
     for chunk in ocr_json.get("chunks") or []:
         parts.append(chunk)

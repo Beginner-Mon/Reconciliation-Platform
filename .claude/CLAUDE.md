@@ -109,10 +109,63 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   phân biệt được với hệ thống hỏng**, và một băng cảnh báo màu vàng cũng không
   đủ để cứu. Thiếu credential → **thoát ngay lúc khởi động (exit 2)**, không có
   đường lui về dữ liệu mẫu. Đừng thêm lại "cho tiện"; đã có test chặn.
-- Processor và **đơn giá phải đi cùng một chỗ** (`PROCESSORS` trong
-  `devserver/__main__.py`, và `DOCAI_PROCESSOR_LABEL` cho audit log). Tách ra là
-  chỗ đã sai: ước tính chi phí lệch 20 lần vì lấy giá Form Parser cho Document
-  OCR. Mặc định `--processor dococr` = Enterprise Document OCR $0,0015/trang.
+- Hàm gọi, **đơn giá** và **nhãn audit** của mỗi engine OCR nằm chung MỘT bảng:
+  `common/ocr_engines.py`. Tách ra là chỗ đã sai: ước tính chi phí lệch 20 lần
+  vì lấy giá Form Parser cho Document OCR. `devserver.PROCESSORS`,
+  `evaluation/flows.py` và `inspect_ocr.ENGINE_LABEL` đều **trỏ vào chính bảng
+  đó**, không giữ bản sao.
+- Engine OCR chọn theo **TỪNG LẦN CHẠY**, không theo tiến trình. `/process` nhận
+  `engine` trong body → `payload["ocr_engine"]` → `ItemSelector` của Map →
+  `event["ocr_engine"]` → `workers/ocr.py`. `OCR_ENGINE` (biến môi trường) chỉ
+  còn là **mặc định** và là nước lui cho state machine đã deploy trước thay đổi
+  này. Sửa `ItemSelector` thì phải sửa cả `devserver/pipeline.py` — test
+  `test_event_cua_devserver_khop_voi_ItemSelector_cua_ASL` so hai bên với nhau.
+  `payload` **luôn** phải mang khoá `ocr_engine`: thiếu là States.Runtime, chết
+  cả run chứ không phải một chứng từ.
+- Bảng `ENGINES` giữ đủ **5** engine nhưng app chỉ cho chọn **2**
+  (`APP_ENGINES = ("textract", "dococr")`, mặc định `textract`). Ba engine kia
+  còn sống vì `evaluation/flows.py` sinh flow từ chính bảng đó — xoá là mất khả
+  năng đo. Lối vào của app (`/process`, `--processor`, giao diện) đi qua
+  `resolve_for_app()`; `evaluation/` vẫn dùng `resolve()`.
+- Engine đã chạy được lưu vào `document.ocr_engine` và khai trong
+  `DOCUMENT_FIELDS`. `audit_log` có nhãn engine nhưng **chưa route API nào đọc**,
+  nên không lưu ở record document thì giao diện không biết chứng từ nào chạy
+  bằng gì.
+- **Client Textract phải đi qua `common/aws_real.py`**, KHÔNG dùng
+  `boto3.client("textract")` trơn. Mọi client khác trong repo đọc
+  `AWS_ENDPOINT_URL` để trỏ vào moto; moto có Textract giả trả `Block` bịa kèm
+  `JobStatus: SUCCEEDED`, nên dev server sẽ chạy êm và hiện chữ bịa mà không có
+  dấu hiệu nào. Đúng thứ đã gỡ ở `fake_ai.py`. Botocore đời mới tự đọc biến đó
+  nên phải chỉ endpoint **tường minh**, không chỉ bỏ tham số. Đã có test chặn.
+- `devserver/__main__.py` **phải đặt `DEFAULTS` vào env TRƯỚC khi import
+  `common`** (hiện đặt ngay mức module, không phải trong `main()`).
+  `common/dynamodb.py` đọc tên bảng vào **hằng số lúc import**
+  (`PROJECTS_TABLE = os.environ.get("PROJECTS_TABLE", "projects")`). Import
+  trước rồi đặt env sau thì hằng số khoá vào `projects` trong khi bootstrap tạo
+  `dev-projects`: dev server in "đã tạo 5 bảng" xong request đầu tiên chết vì
+  `ResourceNotFoundException`. `tests/conftest.py` đặt env ở dòng đầu vì đúng lý
+  do này. Đã có test chặn (chạy ở tiến trình con — trong pytest thì conftest đã
+  đặt sẵn env nên test luôn xanh dù lỗi còn nguyên).
+- `common/aws_real.py` **cũng phải bỏ qua CREDENTIAL của dev server**, không chỉ
+  `AWS_ENDPOINT_URL`. `DEFAULTS` đặt `AWS_ACCESS_KEY_ID=dev` cho moto (moto
+  không kiểm), mà boto3 xét biến môi trường **trước** `~/.aws/credentials` →
+  Textract/S3 thật trả **403 Forbidden**, tức "không có quyền", làm người ta đi
+  sửa IAM policy trong khi khoá gửi lên còn không tồn tại. `aws_real.session()`
+  gỡ provider `env`, **trừ khi** đang chạy trên Lambda — ở đó biến môi trường
+  chính là credential thật của role.
+- **Textract async không nhận bytes**, chỉ nhận địa chỉ S3 (bản sync giới hạn
+  PDF 1 trang nên không dùng được). Trên Lambda file đã nằm sẵn đúng chỗ; ở dev
+  server (moto = RAM) và evaluation (ổ đĩa) thì phải đẩy lên một bucket THẬT
+  (`TEXTRACT_S3_BUCKET`) rồi xoá. Xem `common/textract.py`.
+- Confidence của **Textract là thang 0–100**, của Document AI là **0–1**. Quên
+  chia 100 thì mọi ngưỡng cảnh báo trong Human Review không bao giờ chạm tới và
+  hệ thống im lặng khẳng định "mọi thứ đều chắc chắn". `GetDocument*` còn phân
+  trang bằng `NextToken` — quên vòng lặp là mất trang mà không lỗi nào nổ ra.
+  Xem `tests/test_textract_parse.py`.
+- `RATE_LIMIT_MARKERS` phải phủ **cả tên lỗi của AWS** (`ThrottlingException`,
+  `ProvisionedThroughputExceeded`, `LimitExceeded`), không chỉ của Google. Thiếu
+  thì throttle không thành `RateLimitError` và nhánh `Retry` trong
+  `statemachine.asl.json` không bao giờ chạy — chứng từ chết thay vì thử lại.
 - Chống tính tiền lặp **đã nằm sẵn trong hệ thống**: `/process` bỏ qua doc đã
   `VALIDATED`. Không cần cache riêng ở tầng dev — cache đĩa từng có là thừa.
 - `AgreeRule`/`NumericRule` trong `core/rules.py` lọc theo **TRƯỜNG**, không theo
@@ -150,8 +203,21 @@ model. Rule cũ tự bỏ qua loại mới. Xem `docs/schemas.md` §1.
 - `core/` **không được gọi AI** (deterministic thuần, test offline được).
 - Mỗi lần gọi AI ghi 1 record `AI_CALL` vào `audit_log` (kể cả khi lỗi/rate limit).
 - S3 giữ raw + output lớn; DynamoDB giữ metadata/summary/reference.
-- Tiếng Việt dùng Document AI **Form Parser** (generic); specialized Invoice/PO
-  Parser **không hỗ trợ tiếng Việt**. Giới hạn online ~15 trang / 20MB.
+- Tiếng Việt dùng Document AI (generic); specialized Invoice/PO Parser **không
+  hỗ trợ tiếng Việt**. Giới hạn online ~15 trang / 20MB.
+- **Amazon Textract KHÔNG hỗ trợ tiếng Việt** — AWS chỉ liệt kê English, French,
+  German, Italian, Portuguese, Spanish ([limits-document.html]). Đo trên hoá đơn
+  thật: mất gần hết dấu (`Phuring Khuong Mai` ← *Phường Khương Mai*,
+  `Hinh there thanh toan` ← *Hình thức thanh toán*) nhưng **số đọc đúng hết** và
+  Gemini vẫn trích xuất chính xác cả 7 dòng hàng.
+
+  `textract` vẫn là **mặc định** vì đang có free tier AWS — đánh đổi có ý thức,
+  không phải trôi vào. Bù lại, cảnh báo phải hiện **ngay chỗ người dùng chọn
+  engine** (`app_choices()[...]["supports_vietnamese"]` → menu "Chạy lại với…"
+  và dòng LƯU Ý lúc devserver khởi động), không được chôn trong tài liệu. Cần độ
+  chính xác tiếng Việt thì chọn `dococr` — giao diện đổi được cho từng chứng từ.
+
+  [limits-document.html]: https://docs.aws.amazon.com/textract/latest/dg/limits-document.html
 - Comment/message trong code viết tiếng Việt (theo code hiện có).
 
 ## 8. Lệnh

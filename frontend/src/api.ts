@@ -1,6 +1,8 @@
 import type {
   Extraction,
+  OcrEngineList,
   OcrResult,
+  ProcessOptions,
   ProcessResult,
   Project,
   ProjectDetail,
@@ -49,7 +51,13 @@ export const api = {
       files: fileNames.map((file_name) => ({ file_name })),
     }),
 
-  process: (id: string, options: { force?: boolean } = {}) =>
+  /** Engine OCR, giá và cảnh báo tiếng Việt — nguồn duy nhất là registry ở
+   *  backend, không khai lại bên này. */
+  listOcrEngines: () => request<OcrEngineList>("GET", "/ocr-engines"),
+
+  /** Bỏ trống `document_ids` là chạy cả project; truyền vào là chạy đúng chừng
+   *  đó chứng từ. `force` bỏ qua cache (chứng từ đã VALIDATED). */
+  process: (id: string, options: ProcessOptions = {}) =>
     request<ProcessResult>("POST", `/projects/${id}/process`, options),
 
   reconcile: (id: string) => request<Reconciliation>("POST", `/projects/${id}/reconcile`),

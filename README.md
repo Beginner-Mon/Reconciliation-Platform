@@ -16,6 +16,16 @@ DynamoDB + S3), AI chạy trên **Google Cloud** (Document AI + Gemini), IaC b�
 Đo trên 6 chứng từ thật: OCR chính xác **97,6%**, dấu tiếng Việt **99,5%**, chi
 phí **$0,021** — [evaluation/FINDINGS.md](evaluation/FINDINGS.md).
 
+Bước OCR **đổi engine được ngay trên giao diện, cho từng chứng từ**: Amazon
+Textract (mặc định, đang có free tier) hoặc Google Document AI. Cả hai khai
+chung trong
+[backend/common/ocr_engines.py](backend/common/ocr_engines.py). Nhờ chọn được
+theo từng lần chạy, hai engine so được trên **cùng một** tờ chứng từ.
+
+Textract *không* hỗ trợ tiếng Việt — đo trên hoá đơn thật thì mất gần hết dấu
+nhưng số đọc đúng hết, nên cảnh báo hiện ngay tại chỗ chọn engine. Cần dấu thì
+đổi sang Document AI.
+
 > **Trạng thái: POC.** Chưa có authentication — đây là giới hạn **cố ý** ở giai
 > đoạn này, xem [docs/architecture.md](docs/architecture.md) §11. Đừng đưa dữ
 > liệu thật chưa ẩn danh vào hệ thống.
@@ -45,8 +55,9 @@ vụ, không phải tối ưu.
 
 ![Kiến trúc hệ thống: User qua API Gateway tới 4 Lambda api; api-process khởi động Step Functions chạy Map gồm OCR → Extract → Validate rồi Reconcile; OCR gọi Document AI, Extract gọi Gemini](docs/images/architecture.png)
 
-<sub>Vẽ bằng draw.io. File PNG nhúng sẵn XML nguồn — kéo thẳng vào
-[app.diagrams.net](https://app.diagrams.net) là sửa tiếp được, không cần giữ file `.drawio` riêng.</sub>
+<sub>Vẽ bằng draw.io; file PNG nhúng sẵn XML nguồn nên không cần giữ `.drawio` riêng.
+Muốn sửa: [app.diagrams.net](https://app.diagrams.net) → <b>File → Open From → Device</b> rồi chọn file PNG này.
+Copy-paste hay kéo thả vào canvas KHÔNG được — clipboard chỉ mang pixel, phần XML nằm trong file.</sub>
 
 - **`states:StartExecution` chỉ ở `api-process`** — quyền *tiêu tiền AI*, cô lập
   nó là lý do chính của việc chia bốn. Bảng IAM:

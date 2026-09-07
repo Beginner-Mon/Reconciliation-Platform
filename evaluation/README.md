@@ -61,6 +61,38 @@ item của PO/hóa đơn lại nằm trong bảng. Đây chính là lý do phả
 | `dococr_gemini` | Document OCR → Gemini. Rẻ nhất, **không có bảng/KV** | `DOCAI_OCR_PROCESSOR_ID` |
 | `formparser_kv_only` | Chỉ key-value Form Parser, không gọi LLM | `DOCAI_PROCESSOR_ID` |
 | `gemini_direct` | Gemini đọc thẳng file, **không có OCR** | — |
+| `textract_gemini` | Textract DetectDocumentText → Gemini. $0,0015, **ngang giá `dococr`** | `TEXTRACT_S3_BUCKET` |
+| `textract-analyze_gemini` | Textract AnalyzeDocument FORMS+TABLES+LAYOUT → Gemini. $0,065 | `TEXTRACT_S3_BUCKET` |
+
+### Hai luồng Textract dùng để làm gì
+
+Trả lời bằng **số đo** câu "cả hệ thống chạy trên AWS, sao bước OCR lại đi
+Google?" — thứ chắc chắn bị hỏi khi bảo vệ.
+
+Kết quả nhiều khả năng đã biết trước: **Textract không hỗ trợ tiếng Việt**. AWS
+chỉ liệt kê English, French, German, Italian, Portuguese, Spanish
+([nguồn](https://docs.aws.amazon.com/textract/latest/dg/limits-document.html)).
+Tiếng Việt viết bằng chữ Latin nên Textract vẫn trả về chữ, nhưng dấu (ế, ạ, ữ,
+đ) nằm ngoài tập ký tự nó được huấn luyện. Đối chiếu: Document AI đo được
+**200/201 = 99,5%** từ có dấu khớp chính xác (§2, FINDINGS.md).
+
+Đo rồi ghi lại **vẫn có giá trị**: một dòng "đã thử, đây là số" mạnh hơn nhiều
+so với "nghe nói không hỗ trợ".
+
+**Cần chuẩn bị:** credential AWS (`aws configure`) và một **bucket S3 thật**.
+Textract async chỉ đọc file từ S3 chứ không nhận bytes (bản sync giới hạn PDF 1
+trang, không dùng được), mà file ở đây nằm trên ổ đĩa:
+
+```powershell
+aws s3 mb s3://textract-spike-<tên Ngài> --region ap-southeast-1
+# rồi điền TEXTRACT_S3_BUCKET vào evaluation/.env
+```
+
+File được đẩy lên dưới `textract-staging/` và **xoá ngay sau khi chạy xong**.
+
+Chi phí đo 6 chứng từ mẫu (14 trang): `textract` $0,021 + `textract-analyze`
+$0,91. Tài khoản AWS mới còn free tier 3 tháng thì gần như miễn phí (1.000 trang
+DetectDocumentText và 100 trang Forms/Tables/Layout mỗi tháng).
 
 **`gemini_direct` là mốc so sánh, KHÔNG phải ứng viên.** Không toạ độ, không
 confidence từng từ, có thể bịa, và yếu đúng ở chỗ OCR chuyên dụng mạnh: bảng,

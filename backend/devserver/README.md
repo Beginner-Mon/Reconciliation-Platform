@@ -34,22 +34,33 @@ in rõ thiếu biến nào. Không có đường lui.
 
 | Cờ | Ý nghĩa |
 |---|---|
-| `--processor {dococr,formparser,layout}` | processor Document AI, mặc định `dococr` |
+| `--processor {textract,dococr}` | engine OCR **mặc định**, mặc định `textract`; giao diện chọn lại được cho từng lần chạy |
 | `--upload <thư mục>` | tạo project + upload sẵn file thật trong thư mục (**không** xử lý, nên $0) |
 | `--port` / `--aws-port` | đổi cổng (mặc định 8000 / 5000) |
 | `--quiet` | không in từng request |
 
 ## Chi phí
 
-Processor và **đơn giá đi cùng một chỗ** trong `PROCESSORS` ở `__main__.py`.
-Tách hai thứ đó ra là chỗ đã sai một lần: ước tính chi phí lệch **20 lần** vì
-lấy đơn giá Form Parser gán cho Enterprise Document OCR.
+Hàm gọi, **đơn giá** và **nhãn audit** đi cùng một chỗ: `common/ocr_engines.py`.
+`PROCESSORS` ở `__main__.py` trỏ thẳng vào bảng đó, không giữ bản sao. Tách ra
+là chỗ đã sai một lần: ước tính chi phí lệch **20 lần** vì lấy đơn giá Form
+Parser gán cho Enterprise Document OCR.
 
-| `--processor` | Processor | $/trang | 6 chứng từ mẫu (14 trang) |
+| Engine | Nhà cung cấp | $/trang | 6 chứng từ mẫu (14 trang) |
 |---|---|---|---|
-| `dococr` *(mặc định)* | Enterprise Document OCR | $0,0015 | **$0,021** |
-| `layout` | Layout Parser | $0,010 | $0,14 |
-| `formparser` | Form Parser | $0,030 | $0,42 |
+| `textract` *(mặc định)* | Textract DetectDocumentText | $0,0015 | **$0,021** |
+| `dococr` | Enterprise Document OCR | $0,0015 | $0,021 |
+
+Ba engine `layout` / `formparser` / `textract-analyze` vẫn còn trong bảng nhưng
+**chỉ `evaluation/` dùng được** — dev server và giao diện không cho chọn.
+
+**`textract` KHÔNG hỗ trợ tiếng Việt** (AWS chỉ hỗ trợ English, French, German,
+Italian, Portuguese, Spanish): đo trên hoá đơn thật thì mất gần hết dấu, nhưng
+số đọc đúng hết. Để mặc định vì đang có free tier; cần dấu thì `--processor
+dococr`, hoặc đổi ngay trên giao diện cho từng chứng từ. Textract còn cần thêm
+credential AWS và một
+**bucket S3 thật** (`TEXTRACT_S3_BUCKET`): Textract async chỉ đọc file từ S3,
+mà file của dev server nằm trong moto, tức trong RAM máy Ngài.
 
 Cộng thêm ~$0,01 tiền Gemini cho bước trích xuất.
 

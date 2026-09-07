@@ -50,3 +50,28 @@ def log_pipeline_step(entity_id: str, step: str, status: str, detail: dict | Non
 
 def log_review(entity_id: str, action: str, detail: dict) -> None:
     _log(entity_id, action, detail)
+
+
+def log_process_decision(project_id: str, detail: dict) -> None:
+    """Ghi lại MỌI quyết định của /process, nhất là quyết định BỎ QUA.
+
+    Tính idempotent tiết kiệm tiền bằng cách âm thầm không làm gì — nên nếu
+    không ghi lại thì vài tuần sau không ai trả lời được "vì sao chứng từ này
+    dữ liệu vẫn cũ". Danh sách skip kèm lý do trước đây chỉ nằm trong HTTP
+    response rồi mất theo tab trình duyệt.
+
+    Cờ `force` cũng vào đây: nó chạy lại OCR + Gemini, tốn tiền thật.
+    """
+    _log(project_id, "PROCESS_RUN", detail)
+
+
+def log_edit_overwritten(document_id: str, detail: dict) -> None:
+    """`force_edited=true` sắp cho AI ghi đè lên dữ liệu người đã sửa tay.
+
+    Ghi theo TỪNG document (không gộp vào PROCESS_RUN) để tra được lịch sử của
+    đúng chứng từ đó: bảng audit_log có PK là entity_id.
+
+    Đây là thao tác phá huỷ duy nhất trong hệ thống — công review biến mất và
+    không có cách nào lấy lại.
+    """
+    _log(document_id, "EDIT_OVERWRITTEN", detail)

@@ -13,9 +13,18 @@ def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
     return response["statusCode"], json.loads(response["body"])
 
 
-def put_file(s3_key: str, content: bytes = b"%PDF-1.4 fake") -> None:
+def put_file(s3_key: str, content: bytes | None = None) -> None:
+    """Mặc định mỗi file một nội dung KHÁC nhau.
+
+    Trước đây mọi file dùng chung `b"%PDF-1.4 fake"`. Hai chứng từ nghiệp vụ khác
+    nhau không bao giờ trùng từng byte, nên fixture đó phi thực tế — và nó làm
+    kiểm trùng nội dung tưởng cả project là một file upload đi upload lại.
+    Test nào cần trùng thật thì truyền `content` giống nhau một cách tường minh.
+    """
     from common.s3 import BUCKET, get_s3
 
+    if content is None:
+        content = b"%PDF-1.4 " + s3_key.encode()
     get_s3().put_object(Bucket=BUCKET, Key=s3_key, Body=content)
 
 
@@ -246,6 +255,259 @@ def test_force_edited_thi_xu_ly_ca_doc_da_sua_tay(aws, started_executions):
     )
     assert status == 202
     assert [d["document_id"] for d in body["processing"]] == [created[0]["document_id"]]
+
+
+# --- Chọn engine OCR cho từng lần chạy -------------------------------------
+#
+# Trước đây engine là biến môi trường của tiến trình, cố định cho cả một
+# deployment. Không so được hai engine trên CÙNG một chứng từ, mà đó lại đúng là
+# câu hỏi cần trả lời: engine nào đọc tiếng Việt tốt hơn trên tờ hoá đơn này.
+
+
+def test_chay_lai_dung_MOT_chung_tu_voi_engine_da_chon(aws, started_executions):
+    """Đây là luồng của nút "Chạy lại với…" trên giao diện."""
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
+    for document in created:
+        put_file(document["s3_key"])
+    mark_processed(created[0]["document_id"], PO_DATA)
+    mark_processed(created[1]["document_id"], INVOICE_DATA)
+
+    status, body = call(
+        "POST",
+        f"/projects/{project_id}/process",
+        {"document_ids": [created[0]["document_id"]], "force": True, "engine": "dococr"},
+    )
+
+    assert status == 202
+    assert [d["document_id"] for d in body["processing"]] == [created[0]["document_id"]]
+    assert started_executions[0]["payload"]["ocr_engine"] == "dococr"
+
+
+def test_khong_khai_engine_thi_dung_mac_dinh(aws, started_executions):
+    """Payload phải LUÔN mang khoá `ocr_engine`.
+
+    ASL `ItemSelector` khai `"ocr_engine.$": "$.ocr_engine"` — thiếu khoá là
+    States.Runtime, cả run chết chứ không phải một chứng từ.
+    """
+    from common import ocr_engines
+
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    put_file(created[0]["s3_key"])
+
+    call("POST", f"/projects/{project_id}/process")
+
+    assert started_executions[0]["payload"]["ocr_engine"] == ocr_engines.DEFAULT_ENGINE
+
+
+def test_engine_ngoai_danh_sach_app_tra_400(aws, started_executions):
+    """`formparser` vẫn còn trong bảng cho evaluation, nhưng app không cho chọn."""
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    put_file(created[0]["s3_key"])
+
+    status, body = call(
+        "POST", f"/projects/{project_id}/process", {"engine": "formparser"}
+    )
+
+    assert status == 400
+    assert "formparser" in body["error"]
+    assert started_executions == []
+
+
+def test_engine_duoc_ghi_vao_audit(aws, started_executions):
+    """Không ghi thì vài tuần sau không ai biết con số đo được là của engine nào."""
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    put_file(created[0]["s3_key"])
+
+    call("POST", f"/projects/{project_id}/process", {"engine": "dococr"})
+
+    assert audit_records("PROCESS_RUN")[0]["detail"]["ocr_engine"] == "dococr"
+
+
+def test_route_ocr_engines_liet_ke_dung_hai_lua_chon(aws):
+    """Giao diện lấy nhãn/giá/cảnh báo từ đây thay vì khai lại bên TypeScript."""
+    from common import ocr_engines
+
+    status, body = call("GET", "/ocr-engines")
+
+    assert status == 200
+    assert body["default"] == ocr_engines.DEFAULT_ENGINE
+    assert [e["name"] for e in body["engines"]] == list(ocr_engines.APP_ENGINES)
+    theo_ten = {e["name"]: e for e in body["engines"]}
+    assert theo_ten["textract"]["supports_vietnamese"] is False
+
+
+# --- Audit cho quyết định idempotent ---------------------------------------
+#
+# Tính idempotent tiết kiệm tiền bằng cách âm thầm KHÔNG làm gì. Không ghi lại
+# thì vài tuần sau không ai trả lời được "vì sao chứng từ này dữ liệu vẫn cũ",
+# và tệ hơn: `force_edited` cho AI ghi đè công review mà không để lại vết nào.
+
+
+def audit_records(action: str) -> list[dict]:
+    from common import AUDIT_LOG_TABLE
+    from common.dynamodb import scan_table
+
+    return [item for item in scan_table(AUDIT_LOG_TABLE) if item["action"] == action]
+
+
+def test_process_ghi_audit_kem_ly_do_skip(aws, started_executions):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
+    for document in created:
+        put_file(document["s3_key"])
+    mark_processed(created[0]["document_id"], PO_DATA)
+    mark_processed(created[1]["document_id"], INVOICE_DATA)
+
+    call("POST", f"/projects/{project_id}/process")
+
+    runs = audit_records("PROCESS_RUN")
+    assert len(runs) == 1
+    detail = runs[0]["detail"]
+    assert runs[0]["entity_id"] == project_id
+    assert detail["processed"] == []
+    assert {s["document_id"] for s in detail["skipped"]} == {
+        created[0]["document_id"],
+        created[1]["document_id"],
+    }
+    assert all("đã xử lý xong" in s["reason"] for s in detail["skipped"])
+
+
+def test_process_ghi_lai_co_force(aws, started_executions):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    put_file(created[0]["s3_key"])
+    mark_processed(created[0]["document_id"], PO_DATA)
+
+    call("POST", f"/projects/{project_id}/process", {"force": True})
+
+    detail = audit_records("PROCESS_RUN")[0]["detail"]
+    assert detail["force"] is True
+    assert detail["run_id"]
+    assert detail["processed"] == [created[0]["document_id"]]
+
+
+def test_force_edited_ghi_vet_ghi_de_cong_review(aws, started_executions):
+    """Thao tác phá huỷ duy nhất trong hệ thống phải có dấu vết riêng."""
+    from common import update_document
+
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    put_file(created[0]["s3_key"])
+    mark_processed(created[0]["document_id"], PO_DATA)
+    update_document(
+        created[0]["document_id"], edited_fields=["vendor"], edited_by="tri"
+    )
+
+    call(
+        "POST", f"/projects/{project_id}/process", {"force": True, "force_edited": True}
+    )
+
+    overwritten = audit_records("EDIT_OVERWRITTEN")
+    assert len(overwritten) == 1
+    assert overwritten[0]["entity_id"] == created[0]["document_id"]
+    detail = overwritten[0]["detail"]
+    assert detail["edited_fields"] == ["vendor"]
+    assert detail["edited_by"] == "tri"
+    assert detail["project_id"] == project_id
+
+
+def test_process_binh_thuong_khong_sinh_canh_bao_ghi_de(aws, started_executions):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    put_file(created[0]["s3_key"])
+
+    call("POST", f"/projects/{project_id}/process")
+
+    assert audit_records("EDIT_OVERWRITTEN") == []
+
+
+# --- Upload trùng nội dung --------------------------------------------------
+#
+# Bấm upload hai lần sinh hai document_id khác nhau nhưng cùng một file. Trước
+# đây cả hai đều bị OCR (trả tiền hai lần) rồi cộng vào nhau khi đối chiếu như
+# thể là hai đợt giao hàng.
+
+TRUNG = b"%PDF-1.4 cung mot file"
+
+
+def test_upload_trung_file_thi_chi_xu_ly_mot_ban(aws, started_executions):
+    project_id = make_project()
+    created = add_documents(project_id, "INV-001.pdf", "INV-001-copy.pdf")
+    for document in created:
+        put_file(document["s3_key"], TRUNG)
+
+    status, body = call("POST", f"/projects/{project_id}/process")
+
+    assert status == 202
+    assert [d["document_id"] for d in body["processing"]] == [created[0]["document_id"]]
+    assert [s["document_id"] for s in body["skipped"]] == [created[1]["document_id"]]
+    assert "trùng nội dung với INV-001.pdf" in body["skipped"][0]["reason"]
+    # bản trùng KHÔNG được lọt vào Step Functions — đó là chỗ tốn tiền
+    payload_ids = [d["document_id"] for d in started_executions[0]["payload"]["documents"]]
+    assert payload_ids == [created[0]["document_id"]]
+
+
+def test_file_khac_nhau_thi_khong_bi_coi_la_trung(aws, started_executions):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
+    for document in created:
+        put_file(document["s3_key"])
+
+    status, body = call("POST", f"/projects/{project_id}/process")
+
+    assert status == 202
+    assert len(body["processing"]) == 2
+    assert body["skipped"] == []
+
+
+def _md5(content: bytes) -> str:
+    """ETag của S3 cho upload một phần chính là md5 hex của nội dung."""
+    import hashlib
+
+    return hashlib.md5(content).hexdigest()
+
+
+def test_upload_trung_bi_bat_o_ca_run_sau(aws, started_executions):
+    """content_hash lưu lại nên run sau vẫn nhận ra, không chỉ trong một lần chạy."""
+    from common import update_document
+
+    project_id = make_project()
+    dau = add_documents(project_id, "INV-001.pdf")
+    put_file(dau[0]["s3_key"], TRUNG)
+    mark_processed(dau[0]["document_id"], INVOICE_DATA)
+    update_document(dau[0]["document_id"], content_hash=_md5(TRUNG))
+
+    sau = add_documents(project_id, "INV-001-lai.pdf")
+    put_file(sau[0]["s3_key"], TRUNG)
+    status, body = call("POST", f"/projects/{project_id}/process")
+
+    # mọi ứng viên đều bị loại nên không tạo run mới, chỉ đối chiếu lại
+    assert status == 200
+    ly_do = {s["document_id"]: s["reason"] for s in body["skipped"]}
+    assert "trùng nội dung" in ly_do[sau[0]["document_id"]]
+    assert "đã xử lý xong" in ly_do[dau[0]["document_id"]]
+    assert started_executions == []
+
+
+def test_chay_lai_chinh_no_khong_bi_coi_la_trung(aws, started_executions):
+    """force=true trên cùng document: hash của nó khớp CHÍNH NÓ, không phải trùng."""
+    from common import update_document
+
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    put_file(created[0]["s3_key"], TRUNG)
+    mark_processed(created[0]["document_id"], PO_DATA)
+    update_document(created[0]["document_id"], content_hash=_md5(TRUNG))
+
+    status, body = call("POST", f"/projects/{project_id}/process", {"force": True})
+
+    assert status == 202
+    assert [d["document_id"] for d in body["processing"]] == [created[0]["document_id"]]
+    assert body["skipped"] == []
 
 
 def test_reconcile_endpoint_chay_doc_lap(aws):

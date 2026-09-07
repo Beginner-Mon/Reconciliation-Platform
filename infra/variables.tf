@@ -56,6 +56,17 @@ variable "gemini_model" {
   default     = "gemini-2.5-flash"
 }
 
+variable "ocr_engine" {
+  description = <<-EOT
+    Engine OCR mặc định: textract | dococr. Giao diện chọn lại được cho từng
+    lần chạy. textract KHÔNG hỗ trợ tiếng Việt (mất dấu, số vẫn đúng) — để mặc
+    định vì đang có free tier; cần dấu thì chọn dococr.
+    Xem backend/common/ocr_engines.py và evaluation/FINDINGS.md.
+  EOT
+  type        = string
+  default     = "textract"
+}
+
 variable "gemini_api_key" {
   description = "Gemini API key (lấy miễn phí tại https://aistudio.google.com/apikey)"
   type        = string

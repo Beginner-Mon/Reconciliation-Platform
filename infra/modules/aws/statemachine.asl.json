@@ -9,6 +9,7 @@
       "ItemSelector": {
         "project_id.$": "$.project_id",
         "run_id.$": "$.run_id",
+        "ocr_engine.$": "$.ocr_engine",
         "document_id.$": "$$.Map.Item.Value.document_id",
         "s3_key.$": "$$.Map.Item.Value.s3_key"
       },

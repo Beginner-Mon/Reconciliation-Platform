@@ -26,6 +26,7 @@ import ocr_cache  # noqa: E402
 
 _LOADED_ENV = env_file.load()
 
+from common import ocr_engines  # noqa: E402
 from flows import OCR_ONLY, OCR_ONLY_ENV, OCR_ONLY_USD_PER_PAGE  # noqa: E402
 
 HERE = pathlib.Path(__file__).parent
@@ -48,12 +49,14 @@ def preview(text: str, lines: int = 25, width: int = 76) -> str:
 GEMINI_ENGINE = "gemini_direct"
 ALL_ENGINES = list(OCR_ONLY) + [GEMINI_ENGINE]
 
+# Nhãn sinh từ registry: mô tả và đơn giá không thể lệch với thứ thật sự chạy.
 ENGINE_LABEL = {
-    "formparser": "Document AI Form Parser        $30/1.000 trang",
-    "layout": "Document AI Layout Parser     $10/1.000 trang",
-    "dococr": "Enterprise Document OCR       $1,50/1.000 trang",
-    GEMINI_ENGINE: "KHÔNG PHẢI OCR — Gemini nhìn thẳng ảnh, chỉ để làm mốc so sánh",
+    name: f"{spec['note']:<46} ${ocr_engines.usd_per_page(name) * 1000:.2f}/1.000 trang"
+    for name, spec in ocr_engines.ENGINES.items()
 }
+ENGINE_LABEL[GEMINI_ENGINE] = (
+    "KHÔNG PHẢI OCR — Gemini nhìn thẳng ảnh, chỉ để làm mốc so sánh"
+)
 
 
 def usable_ocr(requested: list[str] | None) -> list[str]:
@@ -70,9 +73,9 @@ def usable_ocr(requested: list[str] | None) -> list[str]:
                 continue
             usable.append(name)
             continue
-        env = OCR_ONLY_ENV[name]
-        if not (os.environ.get("DOCAI_PROJECT") and os.environ.get(env)):
-            print(f"  bỏ {name}: thiếu DOCAI_PROJECT / {env}")
+        thieu = ocr_engines.missing_env(name)
+        if thieu:
+            print(f"  bỏ {name}: thiếu {' / '.join(thieu)}")
             continue
         usable.append(name)
     return usable
@@ -100,6 +103,43 @@ def run_gemini_direct(content: bytes, path, out_dir: pathlib.Path) -> None:
     )
 
 
+def _ty_le_mot_tu(khoi: list[str]) -> str:
+    thuc = [k for k in khoi if k.strip()]
+    if not thuc:
+        return "—"
+    mot_tu = sum(1 for k in thuc if len(k.split()) == 1)
+    return f"{mot_tu}/{len(thuc)} = {mot_tu / len(thuc) * 100:.0f}%"
+
+
+def _so_sanh_khoi(text: str, pages: list[dict]) -> None:
+    """So text phẳng với paragraph/block để biết cái nào gom dòng rời tốt hơn.
+
+    Vấn đề đang tìm cách sửa: text phẳng của Document AI có 45–50% dòng chỉ MỘT
+    TỪ, và thứ tự đọc trộn lẫn các khối (chữ logo chen giữa hai khối địa chỉ).
+    Paragraph/block đến kèm CÙNG response nên không tốn thêm tiền — câu hỏi chỉ
+    là chúng có gom đúng không.
+    """
+    dong = text.split("\n")
+    print("\n  --- gom khối: dòng chỉ một từ ---")
+    print(f"  text phẳng   : {_ty_le_mot_tu(dong):<18} ({len(dong)} dòng)")
+
+    for ten in ("paragraphs", "blocks"):
+        gop = [k for page in pages for k in (page.get(ten) or [])]
+        if not gop:
+            print(f"  {ten:<13}: KHÔNG CÓ  <- processor này không trả về")
+            continue
+        print(f"  {ten:<13}: {_ty_le_mot_tu(gop):<18} ({len(gop)} khối)")
+
+    for ten in ("paragraphs", "blocks"):
+        gop = [k for page in pages[:1] for k in (page.get(ten) or [])]
+        if not gop:
+            continue
+        print(f"\n  --- {ten} trang 1 (6 khối đầu) ---")
+        for i, khoi in enumerate(gop[:6], 1):
+            mot_dong = " ".join(khoi.split())
+            print(f"    [{i}] {mot_dong[:150]}")
+
+
 def describe_ocr(name: str, ocr_json: dict) -> None:
     pages = ocr_json.get("pages") or []
     kv_count = sum(len(p.get("key_value_pairs") or []) for p in pages)
@@ -116,6 +156,8 @@ def describe_ocr(name: str, ocr_json: dict) -> None:
 
     print("\n  --- text thô (25 dòng đầu) ---")
     print("  " + preview(text).replace("\n", "\n  "))
+
+    _so_sanh_khoi(text, pages)
 
     for page in pages[:1]:
         kvs = page.get("key_value_pairs") or []
@@ -162,9 +204,12 @@ def main() -> int:
     engines = usable_ocr(args.ocr)
     if not engines:
         print("\nChưa đặt credential nào. Điền vào file .env:")
-        print("\n  OCR THẬT (không dùng Gemini) — cần DOCAI_PROJECT + đăng nhập GCP:")
+        print("\n  OCR Google — cần DOCAI_PROJECT + đăng nhập GCP:")
         for name, env in OCR_ONLY_ENV.items():
-            print(f"    {env:30s} -> {name}")
+            if env:
+                print(f"    {env:30s} -> {name}")
+        print("\n  OCR AWS — cần credential AWS + một bucket S3 THẬT:")
+        print(f"    {'TEXTRACT_S3_BUCKET':30s} -> textract, textract-analyze")
         print("\n  Không phải OCR, chỉ làm mốc so sánh:")
         print(f"    {'GEMINI_API_KEY':30s} -> {GEMINI_ENGINE}")
         if not env_file.ENV_PATH.exists():

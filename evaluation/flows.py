@@ -8,20 +8,16 @@ chi phí giữa luồng 1 và luồng 3 khoảng 20-50 lần mỗi trang, nên �
 import os
 import time
 
+from common import ocr_engines
 from common.ai_clients import (
-    DOCAI_OCR_USD_PER_PAGE,
     estimate_docai_cost,
     estimate_gemini_cost,
     extract_with_gemini,
     extract_with_gemini_pdf,
     ocr_with_document_ai,
-    ocr_with_layout_parser,
 )
 
 import ocr_cache
-
-OCR_PROCESSOR_ID = os.environ.get("DOCAI_OCR_PROCESSOR_ID", "")
-LAYOUT_USD_PER_PAGE = float(os.environ.get("DOCAI_LAYOUT_USD_PER_PAGE", "0.010"))
 
 MIME_BY_EXT = {
     "pdf": "application/pdf",
@@ -47,52 +43,34 @@ def _result(data, confidence, cost, pages, usage, elapsed) -> dict:
     }
 
 
-def formparser_gemini(content: bytes, path) -> dict:
-    """Luồng hiện tại: Document AI Form Parser -> Gemini đọc text OCR."""
-    started = time.time()
-    ocr_json, cached = ocr_cache.run(
-        "formparser", content, lambda: ocr_with_document_ai(content, mime_for(path))
-    )
-    pages = len(ocr_json.get("pages") or [])
-    extracted = extract_with_gemini(ocr_json)
-    usage = extracted.pop("_usage", {}) or {}
-    cost = (0 if cached else estimate_docai_cost(pages)) + estimate_gemini_cost(usage)
-    return _result(
-        {**(extracted.get("data") or {}), "document_type": extracted.get("document_type")},
-        extracted.get("confidence") or {},
-        cost,
-        pages,
-        usage,
-        time.time() - started,
-    )
+def _engine_gemini(engine: str):
+    """<engine OCR> -> Gemini đọc text OCR. Cùng một khung cho MỌI engine.
 
-
-def dococr_gemini(content: bytes, path) -> dict:
-    """Enterprise Document OCR -> Gemini. Ứng viên chính.
-
-    Vẫn là OCR thật, vẫn có bounding box (cần cho việc bôi sáng vị trí và cắt
-    vùng chữ ký sau này), nhưng $1.50/1000 trang thay vì $30/1000 của Form
-    Parser. Câu hỏi spike phải trả lời: key-value pairs của Form Parser có làm
-    Gemini trích xuất chính xác hơn đủ để bù 20 lần chi phí không?
+    Trước đây mỗi engine có một hàm chép tay, khác nhau đúng hai chỗ: gọi hàm
+    nào và nhân đơn giá nào. Đó chính là chỗ đơn giá lệch được — nay cả hai đều
+    tra từ common/ocr_engines.py.
     """
-    started = time.time()
-    ocr_json, cached = ocr_cache.run(
-        "dococr",
-        content,
-        lambda: ocr_with_document_ai(content, mime_for(path), processor_id=OCR_PROCESSOR_ID),
-    )
-    pages = len(ocr_json.get("pages") or [])
-    extracted = extract_with_gemini(ocr_json)
-    usage = extracted.pop("_usage", {}) or {}
-    cost = (0 if cached else pages * DOCAI_OCR_USD_PER_PAGE) + estimate_gemini_cost(usage)
-    return _result(
-        {**(extracted.get("data") or {}), "document_type": extracted.get("document_type")},
-        extracted.get("confidence") or {},
-        cost,
-        pages,
-        usage,
-        time.time() - started,
-    )
+
+    def flow(content: bytes, path) -> dict:
+        started = time.time()
+        ocr_json, cached = ocr_cache.run(
+            engine, content, lambda: ocr_engines.run(engine, content, mime_for(path))
+        )
+        pages = len(ocr_json.get("pages") or [])
+        extracted = extract_with_gemini(ocr_json)
+        usage = extracted.pop("_usage", {}) or {}
+        cost = (0 if cached else ocr_engines.estimate_cost(engine, pages))
+        cost += estimate_gemini_cost(usage)
+        return _result(
+            {**(extracted.get("data") or {}), "document_type": extracted.get("document_type")},
+            extracted.get("confidence") or {},
+            cost,
+            pages,
+            usage,
+            time.time() - started,
+        )
+
+    return flow
 
 
 def gemini_direct(content: bytes, path) -> dict:
@@ -106,31 +84,6 @@ def gemini_direct(content: bytes, path) -> dict:
         extracted.get("confidence") or {},
         cost,
         None,
-        usage,
-        time.time() - started,
-    )
-
-
-def layout_gemini(content: bytes, path) -> dict:
-    """Gemini Layout Parser -> Gemini. $10/1000 trang.
-
-    Điểm giữa: xử lý được bảng PHỨC TẠP (merge cell, header lồng) — thứ cả
-    Form Parser lẫn Document OCR đều không làm được. Đáng quan tâm vì line item
-    của PO/hóa đơn nằm trong bảng.
-    """
-    started = time.time()
-    ocr_json, cached = ocr_cache.run(
-        "layout", content, lambda: ocr_with_layout_parser(content, mime_for(path))
-    )
-    pages = len(ocr_json.get("pages") or [])
-    extracted = extract_with_gemini(ocr_json)
-    usage = extracted.pop("_usage", {}) or {}
-    cost = (0 if cached else pages * LAYOUT_USD_PER_PAGE) + estimate_gemini_cost(usage)
-    return _result(
-        {**(extracted.get("data") or {}), "document_type": extracted.get("document_type")},
-        extracted.get("confidence") or {},
-        cost,
-        pages,
         usage,
         time.time() - started,
     )
@@ -154,51 +107,44 @@ def formparser_kv_only(content: bytes, path) -> dict:
     return _result(data, {}, estimate_docai_cost(pages), pages, {}, time.time() - started)
 
 
-def ocr_formparser(content: bytes, path) -> dict:
-    return ocr_with_document_ai(content, mime_for(path))
+def _ocr_only(engine: str):
+    def call(content: bytes, path) -> dict:
+        return ocr_engines.run(engine, content, mime_for(path))
 
-
-def ocr_dococr(content: bytes, path) -> dict:
-    return ocr_with_document_ai(content, mime_for(path), processor_id=OCR_PROCESSOR_ID)
-
-
-def ocr_layout(content: bytes, path) -> dict:
-    return ocr_with_layout_parser(content, mime_for(path))
+    return call
 
 
 # Chỉ bước OCR, chưa gọi LLM — dùng để xem output thô trả về những gì.
-OCR_ONLY = {
-    "formparser": ocr_formparser,
-    "layout": ocr_layout,
-    "dococr": ocr_dococr,
-}
+# Ba bảng dưới đây SINH TỪ registry, không khai tay: đây đúng chỗ đơn giá từng
+# lệch 20 lần vì được chép sang một bảng khác rồi quên sửa.
+OCR_ONLY = {name: _ocr_only(name) for name in ocr_engines.ENGINES}
 
 OCR_ONLY_ENV = {
-    "formparser": "DOCAI_PROCESSOR_ID",
-    "layout": "DOCAI_LAYOUT_PROCESSOR_ID",
-    "dococr": "DOCAI_OCR_PROCESSOR_ID",
+    name: spec["processor_env"] for name, spec in ocr_engines.ENGINES.items()
 }
 
 OCR_ONLY_USD_PER_PAGE = {
-    "formparser": 0.030,
-    "layout": LAYOUT_USD_PER_PAGE,
-    "dococr": DOCAI_OCR_USD_PER_PAGE,
+    name: ocr_engines.usd_per_page(name) for name in ocr_engines.ENGINES
 }
 
 
 FLOWS = {
-    "formparser_gemini": formparser_gemini,
-    "layout_gemini": layout_gemini,
-    "dococr_gemini": dococr_gemini,
+    **{f"{name}_gemini": _engine_gemini(name) for name in ocr_engines.ENGINES},
     "formparser_kv_only": formparser_kv_only,
     "gemini_direct": gemini_direct,
 }
 
-# Env var mà mỗi luồng cần, ngoài GEMINI_API_KEY và DOCAI_PROJECT.
-PROCESSOR_ENV = {
-    "formparser_gemini": "DOCAI_PROCESSOR_ID",
-    "formparser_kv_only": "DOCAI_PROCESSOR_ID",
-    "layout_gemini": "DOCAI_LAYOUT_PROCESSOR_ID",
-    "dococr_gemini": "DOCAI_OCR_PROCESSOR_ID",
-    "gemini_direct": None,
-}
+
+def missing_env(flow_name: str) -> list[str]:
+    """Biến môi trường còn thiếu để chạy được luồng này.
+
+    Mỗi engine đòi thứ khác nhau: engine Google cần DOCAI_PROJECT + processor
+    id, engine Textract cần một bucket S3 THẬT (Textract async không nhận bytes
+    — xem backend/common/textract.py).
+    """
+    thieu = [] if os.environ.get("GEMINI_API_KEY") else ["GEMINI_API_KEY"]
+    if flow_name == "gemini_direct":
+        return thieu
+
+    engine = "formparser" if flow_name == "formparser_kv_only" else flow_name[: -len("_gemini")]
+    return thieu + ocr_engines.missing_env(engine)

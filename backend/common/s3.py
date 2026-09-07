@@ -89,6 +89,11 @@ def head_object(key: str) -> dict | None:
         "size_bytes": response["ContentLength"],
         "content_type": response.get("ContentType", ""),
         "last_modified": response.get("LastModified"),
+        # ETag = MD5 nội dung với upload MỘT PHẦN — presigned POST giới hạn 20MB
+        # nên luôn một phần. Dùng để phát hiện upload trùng mà KHÔNG tốn thêm
+        # lời gọi API nào: head_object vốn đã chạy để kiểm file có tồn tại.
+        # S3 trả kèm dấu nháy kép, bỏ đi cho sạch.
+        "etag": (response.get("ETag") or "").strip('"'),
     }
 
 

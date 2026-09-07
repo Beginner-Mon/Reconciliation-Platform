@@ -182,6 +182,20 @@ resource "aws_iam_policy" "lambda_policy" {
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = [aws_secretsmanager_secret.google_sa_key.arn]
       },
+      # Engine OCR thay thế (var.ocr_engine = "textract" / "textract-analyze").
+      # Textract KHÔNG nhận Resource cụ thể cho mấy action này — chỉ "*".
+      # Nó đọc file bằng credential của CHÍNH role này, nên quyền s3:GetObject ở
+      # trên là đủ; không cần SNS vì worker tự poll GetDocument*.
+      {
+        Effect = "Allow"
+        Action = [
+          "textract:StartDocumentTextDetection",
+          "textract:GetDocumentTextDetection",
+          "textract:StartDocumentAnalysis",
+          "textract:GetDocumentAnalysis",
+        ]
+        Resource = ["*"]
+      },
       {
         Effect = "Allow"
         Action = [
@@ -216,6 +230,9 @@ locals {
     GEMINI_MODEL              = var.gemini_model
     GEMINI_API_KEY            = var.gemini_api_key
     GOOGLE_SA_KEY_SECRET      = aws_secretsmanager_secret.google_sa_key.name
+    # Engine OCR: tên tra trong backend/common/ocr_engines.py — hàm gọi, đơn
+    # giá và nhãn audit đều lấy từ đó nên không thể lệch nhau.
+    OCR_ENGINE = var.ocr_engine
   }
 
   workers = {
@@ -491,6 +508,7 @@ locals {
     "POST /projects"                                         = "projects"
     "GET /projects"                                          = "projects"
     "GET /projects/{project_id}"                             = "projects"
+    "GET /ocr-engines"                                       = "projects"
     "POST /projects/{project_id}/documents"                  = "documents"
     "GET /projects/{project_id}/documents"                   = "documents"
     "GET /projects/{project_id}/documents/{document_id}/ocr" = "documents"

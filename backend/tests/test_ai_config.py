@@ -5,8 +5,50 @@
   bỏ response_schema                          -> 447 output token, 7 field
 """
 
-from common.ai_clients import GENERATION_CONFIG, build_extraction_prompt
+import pytest
+
+from common.ai_clients import GENERATION_CONFIG, _raise_if_rate_limited, build_extraction_prompt
+from common.errors import RateLimitError
 from schemas import supported_types
+
+
+# --- Throttle của AWS phải được nhận ra, không chỉ của Google --------------
+#
+# `RATE_LIMIT_MARKERS` viết cho Document AI/Gemini nên chỉ có "429",
+# "quota exceeded", "rate limit"... KHÔNG chuỗi nào khớp tên lỗi của Textract.
+# Không nhận ra thì lỗi không thành `RateLimitError`, và nhánh
+#     "Retry": [{"ErrorEquals": ["RateLimitError"], ...}]
+# trong statemachine.asl.json KHÔNG BAO GIỜ chạy — chứng từ chết luôn thay vì
+# được thử lại. Bị throttle là chuyện thường khi Map chạy 3 doc song song.
+
+
+@pytest.mark.parametrize(
+    "loi",
+    [
+        "ThrottlingException",
+        "ProvisionedThroughputExceededException",
+        "LimitExceededException",
+    ],
+)
+def test_throttle_cua_aws_duoc_coi_la_rate_limit(loi):
+    exc = type(loi, (Exception,), {})("Rate exceeded")
+    with pytest.raises(RateLimitError):
+        _raise_if_rate_limited(exc)
+
+
+def test_throttle_dang_ClientError_cung_bat_duoc():
+    """botocore gói lỗi vào ClientError, tên thật nằm trong CHUỖI thông báo."""
+    exc = Exception(
+        "An error occurred (ThrottlingException) when calling the "
+        "StartDocumentAnalysis operation: Rate exceeded"
+    )
+    with pytest.raises(RateLimitError):
+        _raise_if_rate_limited(exc)
+
+
+def test_loi_thuong_khong_bi_nham_thanh_rate_limit():
+    """Nhận nhầm thì Step Functions retry 4 lần một lỗi không bao giờ tự khỏi."""
+    _raise_if_rate_limited(ValueError("file PDF hỏng"))
 
 
 def test_khong_dat_response_schema_rong():

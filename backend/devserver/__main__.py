@@ -32,30 +32,48 @@ DEFAULTS = {
     "STATE_MACHINE_ARN": "arn:aws:states:local:000000000000:stateMachine:devserver",
 }
 
+ENV_PATH = pathlib.Path(__file__).resolve().parents[2] / "evaluation" / ".env"
+
+
+def load_env_file(path: pathlib.Path | None = None) -> None:
+    """Nạp evaluation/.env vào os.environ. Biến đã có sẵn thì không ghi đè."""
+    path = path or ENV_PATH
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip().strip('"').strip("'")
+        if value and not value.startswith("<") and key.strip() not in os.environ:
+            os.environ[key.strip()] = value
+
+
+# ĐẶT MÔI TRƯỜNG XONG XUÔI RỒI MỚI ĐƯỢC import `common` — không dời xuống
+# `main()`. Các module trong `common` đọc cấu hình vào HẰNG SỐ ngay lúc import:
+#
+#   common/dynamodb.py   PROJECTS_TABLE = os.environ.get("PROJECTS_TABLE", ...)
+#   common/ai_clients.py DOCAI_PROJECT, DOCAI_PROCESSOR_ID, GEMINI_MODEL, ...
+#
+# Import trước rồi đặt env sau thì hằng số khoá vào giá trị mặc định, và cả hai
+# lần đều hỏng theo kiểu KHÔNG hé lộ nguyên nhân:
+#   - bảng: in "đã tạo 5 bảng" xong request đầu chết vì ResourceNotFoundException
+#   - AI  : chọn Document AI trên giao diện thì nổ "Thiếu DOCAI_PROJECT" giữa
+#           chừng, dù .env đã điền đủ
+# `tests/conftest.py` đặt env ở dòng đầu tiên vì đúng lý do này.
+for _key, _value in DEFAULTS.items():
+    os.environ.setdefault(_key, _value)
+load_env_file()
+
 # Processor id và ĐƠN GIÁ phải đi cùng một chỗ. Tách ra là sai: bản v1 từng ước
 # tính chi phí lệch 20 lần vì lấy đơn giá Form Parser cho Enterprise Document OCR.
-PROCESSORS = {
-    "dococr": {
-        "env": "DOCAI_OCR_PROCESSOR_ID",
-        "usd_per_page": "0.0015",
-        "label": "documentai-enterprise-document-ocr",
-        "note": "Enterprise Document OCR",
-    },
-    "formparser": {
-        "env": "DOCAI_PROCESSOR_ID",
-        "usd_per_page": "0.030",
-        "label": "documentai-form-parser",
-        "note": "Form Parser",
-    },
-    "layout": {
-        "env": "DOCAI_LAYOUT_PROCESSOR_ID",
-        "usd_per_page": "0.010",
-        "label": "documentai-layout-parser",
-        "note": "Layout Parser",
-    },
-}
+#
+# Bảng này giờ là CHÍNH common/ocr_engines.py, không phải bản sao — dev server,
+# worker production và evaluation dùng chung một đối tượng nên không thể lệch.
+from common import ocr_engines  # noqa: E402
 
-ENV_PATH = pathlib.Path(__file__).resolve().parents[2] / "evaluation" / ".env"
+PROCESSORS = ocr_engines.ENGINES
 
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tiff"}
 
@@ -75,34 +93,18 @@ ROUTES_NOTE = """
 """
 
 
-def load_env_file() -> None:
-    """Nạp evaluation/.env vào os.environ. Biến đã có sẵn thì không ghi đè."""
-    if not ENV_PATH.exists():
-        return
-    for raw in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        value = value.strip().strip('"').strip("'")
-        if value and not value.startswith("<") and key.strip() not in os.environ:
-            os.environ[key.strip()] = value
-
-
 def setup_ai(processor: str) -> dict:
-    """Chọn processor, kiểm credential. THIẾU LÀ THOÁT — không có đường lui.
+    """Chọn engine OCR, kiểm credential. THIẾU LÀ THOÁT — không có đường lui.
 
     Trước đây thiếu credential thì rơi về AI giả, và giao diện hiện dữ liệu mẫu
     trông y hệt hệ thống hỏng. Thà chết lúc khởi động còn hơn chạy sai âm thầm.
-    """
-    spec = PROCESSORS[processor]
-    processor_id = os.environ.get(spec["env"], "")
 
-    missing = []
-    if not os.environ.get("DOCAI_PROJECT"):
-        missing.append("DOCAI_PROJECT")
-    if not processor_id:
-        missing.append(f"{spec['env']}  (processor {processor})")
+    Mỗi engine đòi credential khác nhau: engine Google cần DOCAI_PROJECT +
+    processor id, engine Textract cần một bucket S3 THẬT (xem common/textract.py
+    — Textract async không nhận bytes, mà file của dev server nằm trong moto).
+    """
+    spec = ocr_engines.resolve_for_app(processor)
+    missing = ocr_engines.missing_env(processor)
     if not os.environ.get("GEMINI_API_KEY"):
         missing.append("GEMINI_API_KEY")
 
@@ -114,10 +116,8 @@ def setup_ai(processor: str) -> dict:
         print("Dev server chỉ chạy với AI thật; không còn chế độ dữ liệu mẫu.")
         sys.exit(2)
 
-    # ai_clients đọc các biến này lúc import, nên phải đặt TRƯỚC khi import worker.
-    os.environ["DOCAI_PROCESSOR_ID"] = processor_id
-    os.environ["DOCAI_USD_PER_PAGE"] = spec["usd_per_page"]
-    os.environ["DOCAI_PROCESSOR_LABEL"] = spec["label"]
+    # worker đọc biến này lúc CHẠY, nên đặt ở đây là đủ.
+    os.environ["OCR_ENGINE"] = processor
     return spec
 
 
@@ -177,23 +177,33 @@ def upload_folder(folder: pathlib.Path, host: str, port: int) -> str | None:
     return project_id
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devserver")
     parser.add_argument("--port", type=int, default=8000, help="cổng API (mặc định 8000)")
     parser.add_argument("--aws-port", type=int, default=5000, help="cổng moto (mặc định 5000)")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--processor", choices=list(PROCESSORS), default="dococr",
-                        help="processor Document AI (mặc định dococr — rẻ nhất)")
+    # CHỈ engine của app. Ba engine còn lại trong bảng chỉ để `evaluation/` đo —
+    # chưa chạy trên đường production nào nên không cho chọn ở đây.
+    parser.add_argument("--processor", choices=list(ocr_engines.APP_ENGINES),
+                        default=ocr_engines.DEFAULT_ENGINE,
+                        help=f"engine OCR mặc định của server (mặc định "
+                             f"{ocr_engines.DEFAULT_ENGINE}); giao diện chọn lại "
+                             f"được cho từng lần chạy")
     parser.add_argument("--upload", metavar="THƯ_MỤC",
                         help="tạo project và upload sẵn file thật trong thư mục (không xử lý)")
     parser.add_argument("--quiet", action="store_true", help="không in từng request")
-    args = parser.parse_args()
+    return parser
 
-    for key, value in DEFAULTS.items():
-        os.environ.setdefault(key, value)
+
+def main() -> int:
+    args = build_parser().parse_args()
+
+    # DEFAULTS đã vào env từ lúc import (bắt buộc — xem ghi chú ở đầu file).
+    # AWS_ENDPOINT_URL thì phụ thuộc tham số dòng lệnh nên đặt ở đây được:
+    # `common/s3.py` và `dynamodb.py` đọc biến này LÚC GỌI, không phải lúc import.
     os.environ["AWS_ENDPOINT_URL"] = f"http://{args.host}:{args.aws_port}"
 
-    load_env_file()
+    # `.env` đã nạp từ lúc import, cùng lý do với DEFAULTS (xem đầu file).
     spec = setup_ai(args.processor)
 
     # moto chạy trên werkzeug và log mọi request nội bộ — ồn và không giúp gì,
@@ -225,7 +235,15 @@ def main() -> int:
         print("\nAI           : THẬT — mỗi lần xử lý đều TỐN TIỀN")
         print(f"  OCR        : {spec['note']}  (${spec['usd_per_page']}/trang)")
         print(f"  trích xuất : {os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')}")
-        print(f"  dự án GCP  : {os.environ['DOCAI_PROJECT']} / {os.environ.get('DOCAI_LOCATION', 'us')}")
+        if spec["cloud"] == "google":
+            print(
+                f"  dự án GCP  : {os.environ['DOCAI_PROJECT']}"
+                f" / {os.environ.get('DOCAI_LOCATION', 'us')}"
+            )
+        else:
+            print(f"  bucket tạm : {os.environ.get('TEXTRACT_S3_BUCKET', '(trên Lambda)')}")
+        if not spec["supports_vietnamese"]:
+            print("  LƯU Ý      : engine này KHÔNG hỗ trợ tiếng Việt — mất dấu")
 
         plan = pipeline.install()
         print("\nĐiều phối    : đọc từ statemachine.asl.json")

@@ -9,7 +9,6 @@ Xem README.md cùng thư mục.
 
 import argparse
 import json
-import os
 import pathlib
 import sys
 import traceback
@@ -23,7 +22,7 @@ import env_file  # noqa: E402
 
 env_file.load()
 
-from flows import FLOWS, PROCESSOR_ENV  # noqa: E402
+from flows import FLOWS, missing_env  # noqa: E402
 from scoring import aggregate, score_document  # noqa: E402
 
 HERE = pathlib.Path(__file__).parent
@@ -56,12 +55,9 @@ def available_flows(requested: list[str] | None) -> list[str]:
 
     usable = []
     for name in names:
-        if not os.environ.get("GEMINI_API_KEY"):
-            print(f"  bỏ {name}: thiếu GEMINI_API_KEY")
-            continue
-        needed = PROCESSOR_ENV.get(name)
-        if needed and not (os.environ.get("DOCAI_PROJECT") and os.environ.get(needed)):
-            print(f"  bỏ {name}: thiếu DOCAI_PROJECT / {needed}")
+        thieu = missing_env(name)
+        if thieu:
+            print(f"  bỏ {name}: thiếu {' / '.join(thieu)}")
             continue
         usable.append(name)
     return usable

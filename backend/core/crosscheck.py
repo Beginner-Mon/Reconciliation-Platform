@@ -1,6 +1,8 @@
 from .rules import (
     CROSS_RULES,
+    PROJECT_RULES,
     SEVERITY_ORDER,
+    TOTAL_AMOUNT_FIELD,
     Discrepancy,
     DiscrepancyValue,
     DocumentGroup,
@@ -99,16 +101,73 @@ def _unlinked_discrepancies(unlinked: list[DocumentRef]) -> list[Discrepancy]:
     ]
 
 
+def _mislabeled_hint(
+    group_discrepancies: list[Discrepancy],
+    project_discrepancies: list[Discrepancy],
+) -> list[Discrepancy]:
+    """Nhiều nhóm lệch tiền nhưng TỔNG TOÀN PROJECT lại khớp.
+
+    Hai sai số triệt tiêu nhau — dấu hiệu điển hình của ghi nhầm `po_number`
+    (tiền gán sai đơn hàng), chứ không phải ai đó đòi thừa tiền. Chỉ cộng theo
+    nhóm thì không thấy; chỉ cộng toàn project thì im lặng hoàn toàn. Phải có cả
+    hai mới nói được điều này.
+
+    CHỈ gọi khi project có từ 2 nhóm trở lên. Một nhóm thì tổng project chính là
+    tổng nhóm, không thể triệt tiêu, và hàm này sẽ báo nhầm mọi lệch tiền thường.
+    """
+    lech_nhom = [d for d in group_discrepancies if d.field == TOTAL_AMOUNT_FIELD]
+    lech_project = [d for d in project_discrepancies if d.field == TOTAL_AMOUNT_FIELD]
+    if not lech_nhom or lech_project:
+        return []
+
+    return [
+        Discrepancy(
+            rule_id="po_number_co_the_ghi_nham",
+            field="po_number",
+            severity="medium",
+            values=[
+                value
+                for discrepancy in lech_nhom
+                for value in discrepancy.values
+            ],
+            explanation=(
+                f"{len(lech_nhom)} nhóm lệch tiền nhưng tổng toàn project khớp — "
+                "nhiều khả năng ghi nhầm po_number chứ không phải sai số tiền"
+            ),
+        )
+    ]
+
+
 def run_crosscheck(documents: list[dict]) -> dict:
     refs, skipped = build_refs(documents)
     groups, unlinked = group_documents(refs)
 
-    discrepancies: list[Discrepancy] = _unlinked_discrepancies(unlinked)
+    group_discrepancies: list[Discrepancy] = []
     for group in groups:
         if len(group.documents) < 2:
             continue
         for rule in CROSS_RULES:
-            discrepancies.extend(rule.evaluate(group))
+            group_discrepancies.extend(rule.evaluate(group))
+
+    # Tầng project: gộp mọi chứng từ thành một nhóm ảo, bỏ qua ranh giới
+    # po_number. Trả lời câu hỏi "tổng thể project có hợp lệ không".
+    #
+    # Chỉ chạy khi có TỪ 2 NHÓM trở lên — một nhóm thì tổng project chính là
+    # tổng nhóm, chạy thêm chỉ nhân đôi cùng một cảnh báo.
+    project_discrepancies: list[Discrepancy] = []
+    hint: list[Discrepancy] = []
+    if len(groups) > 1:
+        whole = DocumentGroup(key=None, documents=refs)
+        for rule in PROJECT_RULES:
+            project_discrepancies.extend(rule.evaluate(whole))
+        hint = _mislabeled_hint(group_discrepancies, project_discrepancies)
+
+    discrepancies = (
+        _unlinked_discrepancies(unlinked)
+        + group_discrepancies
+        + project_discrepancies
+        + hint
+    )
 
     discrepancies.sort(key=lambda d: (SEVERITY_ORDER.get(d.severity, 9), d.rule_id, d.field))
 

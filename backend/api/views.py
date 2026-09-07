@@ -28,12 +28,20 @@ DOCUMENT_FIELDS = [
     "updated_at",
     "document_type",
     "po_number",
+    # Engine OCR đã chạy cho chứng từ này. Engine giờ chọn được theo TỪNG lần
+    # chạy, nên không lưu ra đây thì màn hình không phân biệt được chứng từ nào
+    # đọc bằng Textract, chứng từ nào bằng Document AI.
+    "ocr_engine",
     "extraction",
     # confidence từ OCR — màn review dùng để tô trường AI đọc không chắc.
     # Spike đo được: conf 0,38 đúng là chỗ đọc sai. Thiếu trường này thì người
     # review không biết nên soi chỗ nào trước.
     "confidence",
     "validation",
+    # Trường LLM trả về mà không tìm thấy trong text OCR — nhiều khả năng bị bịa.
+    # Để TOP-LEVEL chứ không nhét vào `validation`: worker validate ghi đè nguyên
+    # cả dict `validation` và nó chạy SAU extract, nhét vào đó là mất sạch.
+    "ungrounded_fields",
     "edited_fields",
     "edited_at",
     "error",

@@ -10,6 +10,8 @@ from common import (
     write_json,
 )
 
+from core import check_grounding
+
 from .steps import begin_step, finish_step
 
 
@@ -62,11 +64,22 @@ def lambda_handler(event: dict, context) -> dict:
     key = extraction_key(project_id, document_id)
     write_json(key, extracted)
 
+    # Neo output của LLM về nguồn: giá trị nào không tìm thấy trong text OCR thì
+    # nhiều khả năng bị bịa. CẢNH BÁO chứ không chặn — giá trị suy ra (subtotal
+    # tính từ line items) có thể không xuất hiện nguyên văn mà vẫn đúng.
+    #
+    # Gọi ở ĐÂY chứ không ở worker validate: `ocr_json` đang sẵn trong bộ nhớ
+    # (vừa đọc để dựng prompt) nên tốn 0 lời gọi S3 thêm. Kèm theo một hệ quả
+    # đúng ý: sửa tay chạy lại validate chứ không chạy lại extract, nên giá trị
+    # người sửa KHÔNG bị kiểm neo — người sửa chính là để sửa chỗ OCR đọc sai.
+    ungrounded = check_grounding(data, ocr_json.get("text"))
+
     updates = {
         "extraction_s3_key": key,
         "extraction": data,
         "confidence": confidence,
         "document_type": document_type,
+        "ungrounded_fields": ungrounded,
     }
     if data.get("po_number"):
         updates["po_number"] = data["po_number"]

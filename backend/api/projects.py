@@ -7,6 +7,7 @@ from common import (
     get_item,
     new_project_id,
     now_iso,
+    ocr_engines,
     put_item,
     query_documents_by_project,
 )
@@ -39,6 +40,20 @@ def create_project(params: dict, body: dict) -> dict:
     }
     put_item(PROJECTS_TABLE, project)
     return json_response(project, 201)
+
+
+def list_ocr_engines(params: dict, body: dict) -> dict:
+    """Engine OCR mà giao diện được phép chọn, kèm giá và cảnh báo tiếng Việt.
+
+    Phục vụ TỪ ĐÂY thay vì khai lại bên TypeScript: hai bản sao rồi sẽ lệch
+    nhau, và đó đúng là cách ước tính chi phí đã lệch 20 lần lần trước.
+    """
+    return json_response(
+        {
+            "default": ocr_engines.DEFAULT_ENGINE,
+            "engines": ocr_engines.app_choices(),
+        }
+    )
 
 
 def list_projects(params: dict, body: dict) -> dict:

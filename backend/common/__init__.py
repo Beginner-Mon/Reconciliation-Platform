@@ -7,7 +7,13 @@ from .ai_clients import (
     now_ms,
     ocr_with_document_ai,
 )
-from .audit import log_ai_call, log_pipeline_step, log_review
+from .audit import (
+    log_ai_call,
+    log_edit_overwritten,
+    log_pipeline_step,
+    log_process_decision,
+    log_review,
+)
 from .dynamodb import (
     AUDIT_LOG_TABLE,
     DOCUMENTS_TABLE,
@@ -25,6 +31,7 @@ from .dynamodb import (
     update_item,
     update_project,
 )
+from . import ocr_engines
 from .errors import AppError, BadRequest, Conflict, NotFound, RateLimitError
 from .ids import (
     new_document_id,
@@ -75,7 +82,9 @@ __all__ = [
     "get_table",
     "head_object",
     "log_ai_call",
+    "log_edit_overwritten",
     "log_pipeline_step",
+    "log_process_decision",
     "log_review",
     "new_document_id",
     "new_project_id",
@@ -83,6 +92,7 @@ __all__ = [
     "new_run_id",
     "now_iso",
     "now_ms",
+    "ocr_engines",
     "ocr_key",
     "ocr_with_document_ai",
     "put_item",

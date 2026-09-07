@@ -122,10 +122,51 @@ notification Lambda — **không phải sửa worker**, vì worker vốn chỉ g
 
 ## 7. AI Design
 
-### 7.1 OCR — Document AI Form Parser
-Tài liệu tiếng Việt dùng Form Parser (generic); specialized parsers
-(Invoice/PO Parser) **không hỗ trợ tiếng Việt**.
+### 7.1 OCR — engine thay được, mặc định Document AI
+Tài liệu tiếng Việt dùng processor generic; specialized parsers (Invoice/PO
+Parser) **không hỗ trợ tiếng Việt**.
 Giới hạn online: ~15 trang / 20MB → `/process` từ chối sớm bằng `head_object`.
+
+`workers/ocr.py` không gọi thẳng một nhà cung cấp nào. Nó tra
+`common/ocr_engines.py` — bảng duy nhất giữ **hàm gọi, đơn giá và nhãn audit**
+của mỗi engine. Ba thứ đó phải đi cùng nhau: tách ra là chỗ đã làm ước tính chi
+phí lệch 20 lần.
+
+Engine chọn theo **từng lần chạy**, không theo tiến trình:
+
+```
+POST /process {engine}  ->  payload["ocr_engine"]  ->  Map ItemSelector
+                        ->  event["ocr_engine"]    ->  workers/ocr.py
+                        ->  document.ocr_engine    ->  giao diện
+```
+
+`OCR_ENGINE` (biến môi trường) chỉ còn là **mặc định**, và là nước lui cho state
+machine đã deploy trước thay đổi này. Nhờ vậy hai chứng từ trong cùng một
+project chạy được bằng hai engine khác nhau — điều kiện cần để so engine trên
+**cùng** một tờ hoá đơn.
+
+| Engine | Nhà cung cấp | $/trang | Có gì | App chọn được |
+|---|---|---|---|---|
+| `textract` *(mặc định)* | Textract DetectDocumentText | 0,0015 | text, dòng, confidence | ✓ |
+| `dococr` | Document AI Enterprise Document OCR | 0,0015 | text, khối, confidence | ✓ |
+| `layout` | Document AI Layout Parser | 0,010 | + chunk, bảng phức tạp | chỉ `evaluation/` |
+| `formparser` | Document AI Form Parser | 0,030 | + key-value, bảng | chỉ `evaluation/` |
+| `textract-analyze` | Textract AnalyzeDocument | 0,065 | + key-value, bảng, khối | chỉ `evaluation/` |
+
+Ba engine cuối vẫn nằm trong bảng vì `evaluation/flows.py` sinh flow từ chính
+bảng đó — xoá đi là mất khả năng trả lời "sao không dùng Form Parser?" bằng số
+đo. Nhưng `APP_ENGINES` khoá lối vào của app xuống hai engine đầu.
+
+Mọi engine trả **cùng một hình dạng** (`text` / `pages[].lines,blocks,tables,
+key_value_pairs`), nên đổi engine không đụng tới extract, validate hay frontend.
+
+**Textract không hỗ trợ tiếng Việt** (AWS chỉ hỗ trợ English, French, German,
+Italian, Portuguese, Spanish). Đo trên hoá đơn thật: mất gần hết dấu nhưng số
+đọc đúng hết. Vẫn để mặc định vì đang có free tier — bù lại giao diện hiện cảnh
+báo ngay tại menu chọn engine, và đổi sang `dococr` được cho từng chứng từ.
+Hai chi tiết vận hành riêng của chúng: phải dùng **API async** (bản sync giới
+hạn PDF 1 trang) và async chỉ **đọc file từ S3** chứ không nhận bytes — trên
+Lambda file đã nằm sẵn đúng chỗ, ở máy local phải có bucket tạm.
 
 ### 7.2 Extraction — Gemini (1 model + N schema)
 1 call vừa classify vừa extract, trả `{document_type, data, confidence}` theo
@@ -135,7 +176,10 @@ không sửa prompt bằng tay.
 
 ### 7.3 Lỗi tạm thời
 429 / quota / 503 được bọc thành `RateLimitError` để Step Functions `Retry`
-phân biệt được với lỗi logic (backoff 2x + full jitter, tối đa 4 lần).
+phân biệt được với lỗi logic (backoff 2x + full jitter, tối đa 4 lần). Danh sách
+nhận dạng phải phủ **cả tên lỗi của AWS** (`ThrottlingException`,
+`ProvisionedThroughputExceeded`, `LimitExceeded`), không chỉ của Google — thiếu
+thì throttle không thành `RateLimitError` và nhánh `Retry` không bao giờ chạy.
 
 ### 7.4 Hai dịch vụ Google RỜI NHAU
 
