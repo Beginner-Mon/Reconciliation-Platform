@@ -33,4 +33,9 @@ infra/*.tfstate.*
 infra/*.tfvars
 !infra/dev.tfvars.example
 infra/artifacts/
+# File plan CHỨA giá trị biến sensitive (gemini_api_key, khoá service account
+# Google) ở dạng đọc được. Commit là lộ key.
+infra/tfplan
+infra/*.tfplan
+infra/plan.json
 infra/build/

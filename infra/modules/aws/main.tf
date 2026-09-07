@@ -226,10 +226,15 @@ locals {
     DOCUMENTS_BUCKET          = aws_s3_bucket.documents.bucket
     DOCAI_PROJECT             = var.gcp_project_id
     DOCAI_LOCATION            = var.gcp_docai_location
-    DOCAI_PROCESSOR_ID        = var.gcp_docai_processor_id
-    GEMINI_MODEL              = var.gemini_model
-    GEMINI_API_KEY            = var.gemini_api_key
-    GOOGLE_SA_KEY_SECRET      = aws_secretsmanager_secret.google_sa_key.name
+    # Mỗi engine Document AI đọc processor id của RIÊNG nó (xem
+    # common/ocr_engines.py `processor_env`). `dococr` nằm trong APP_ENGINES nên
+    # thiếu DOCAI_OCR_PROCESSOR_ID là bấm "Chạy lại với Document AI" trên giao
+    # diện sẽ nổ ngay trên production. tests/test_routes.py chặn việc này.
+    DOCAI_OCR_PROCESSOR_ID = var.gcp_docai_ocr_processor_id
+    DOCAI_PROCESSOR_ID     = var.gcp_docai_processor_id
+    GEMINI_MODEL           = var.gemini_model
+    GEMINI_API_KEY         = var.gemini_api_key
+    GOOGLE_SA_KEY_SECRET   = aws_secretsmanager_secret.google_sa_key.name
     # Engine OCR: tên tra trong backend/common/ocr_engines.py — hàm gọi, đơn
     # giá và nhãn audit đều lấy từ đó nên không thể lệch nhau.
     OCR_ENGINE = var.ocr_engine

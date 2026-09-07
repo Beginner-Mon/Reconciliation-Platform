@@ -19,7 +19,14 @@ variable "gcp_docai_location" {
 }
 
 variable "gcp_docai_processor_id" {
-  type = string
+  description = "Form Parser — chỉ evaluation/ dùng, app không chạy. Để trống được."
+  type        = string
+  default     = ""
+}
+
+variable "gcp_docai_ocr_processor_id" {
+  description = "Document OCR — engine `dococr` mà giao diện cho chọn. Bắt buộc."
+  type        = string
 }
 
 variable "gemini_model" {

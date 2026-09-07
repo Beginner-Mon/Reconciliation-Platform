@@ -5,26 +5,50 @@ aws_region = "ap-southeast-1"
 app_name   = "recon"
 env        = "dev"
 
-# ===== CHỖ DÁN CREDENTIAL GCP =====
-# 1. Tạo project trên https://console.cloud.google.com
-# 2. Dán project ID vào đây:
+# ===== CREDENTIAL AWS =====
+# KHÔNG dán ở đây — chạy: aws configure
+# (Access Key ID + Secret Access Key + region ap-southeast-1)
+
+
+# ===== ENGINE OCR MẶC ĐỊNH =====
+# textract | dococr. Giao diện chọn lại được cho TỪNG chứng từ, đây chỉ là mặc
+# định của nút "Xử lý".
+#
+# textract KHÔNG hỗ trợ tiếng Việt: đo trên hoá đơn thật thì mất gần hết dấu
+# (`Phuring Khuong Mai` <- `Phường Khương Mai`) nhưng SỐ đọc đúng hết. Để mặc
+# định vì đang có free tier AWS; cần dấu thì đổi sang dococr.
+ocr_engine = "textract"
+
+
+# ===== GOOGLE CLOUD =====
+# 1. Tạo project trên https://console.cloud.google.com rồi dán project ID:
 gcp_project_id = "YOUR_GCP_PROJECT_ID"
 
-# 3. Tạo Document AI Form Parser processor trong Console:
-#    https://console.cloud.google.com/ai/document-ai/processor-library
-#    → Chọn "Form Parser" → tạo → dán processor ID vào đây:
-gcp_docai_processor_id = "YOUR_PROCESSOR_ID"
-
+# 2. Vùng đặt processor: us hoặc eu. PHẢI trùng vùng lúc tạo processor.
 gcp_docai_location = "us"
 
-# Đường dẫn file credentials JSON (SA key) nếu không dùng gcloud CLI.
-# Nếu đã chạy "gcloud auth application-default login" thì để trống "".
+# 3. Tạo processor tại
+#    https://console.cloud.google.com/ai/document-ai/processor-library
+#
+#    BẮT BUỘC — "Document OCR" (KHÔNG phải Form Parser). Đây là engine `dococr`
+#    mà giao diện cho chọn; thiếu thì bấm "Chạy lại với Document AI" sẽ lỗi.
+gcp_docai_ocr_processor_id = "YOUR_DOCUMENT_OCR_PROCESSOR_ID"
+
+#    TUỲ CHỌN — "Form Parser". App KHÔNG chạy engine này (không nằm trong
+#    APP_ENGINES), chỉ `evaluation/` dùng để đo so sánh. Để trống nếu không đo.
+gcp_docai_processor_id = ""
+
+# 4. Xác thực. Đã chạy `gcloud auth application-default login` thì để trống.
+#    Không thì điền đường dẫn file service account key JSON.
 gcp_credentials_file = ""
 
-# ===== CHỖ DÁN GEMINI API KEY =====
-# Vào https://aistudio.google.com/apikey → Create API key → dán vào đây:
-gemini_api_key = "YOUR_GEMINI_API_KEY"
 
-# ===== CHỖ DÁN CREDENTIAL AWS =====
-# KHÔNG dán ở đây — chạy lệnh: aws configure
-# (nhập AWS Access Key ID + Secret Access Key + region ap-southeast-1)
+# ===== GEMINI =====
+# https://aistudio.google.com/apikey -> Create API key
+gemini_api_key = "YOUR_GEMINI_API_KEY"
+gemini_model   = "gemini-2.5-flash"
+
+
+# ===== CORS =====
+# Origin được phép upload thẳng lên S3. Thu hẹp lại khi đã biết domain frontend.
+frontend_origins = ["*"]

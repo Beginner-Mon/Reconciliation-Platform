@@ -39,9 +39,23 @@ variable "gcp_docai_location" {
   default     = "us"
 }
 
-variable "gcp_docai_processor_id" {
-  description = "Document AI Form Parser processor ID (tạo thủ công trong GCP Console)"
+variable "gcp_docai_ocr_processor_id" {
+  description = <<-EOT
+    Document AI "Document OCR" processor ID — engine `dococr` mà giao diện cho
+    chọn. Tạo thủ công tại console.cloud.google.com/ai/document-ai/processor-library
+    (chọn Document OCR, KHÔNG phải Form Parser).
+  EOT
   type        = string
+}
+
+variable "gcp_docai_processor_id" {
+  description = <<-EOT
+    Document AI Form Parser processor ID. KHÔNG bắt buộc: `formparser` không nằm
+    trong APP_ENGINES nên app không chạy nó, chỉ `evaluation/` mới dùng. Để
+    trống nếu không đo Form Parser.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "gcp_credentials_file" {

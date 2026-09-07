@@ -36,15 +36,16 @@ module "gcp" {
 module "aws" {
   source = "./modules/aws"
 
-  app_name               = var.app_name
-  env                    = var.env
-  backend_zip_path       = var.backend_zip_path
-  gcp_project_id         = var.gcp_project_id
-  gcp_docai_location     = var.gcp_docai_location
-  gcp_docai_processor_id = var.gcp_docai_processor_id
-  gemini_model           = var.gemini_model
-  gemini_api_key         = var.gemini_api_key
-  ocr_engine             = var.ocr_engine
-  gcp_sa_key_json        = base64decode(module.gcp.sa_private_key)
-  frontend_origins       = var.frontend_origins
+  app_name                   = var.app_name
+  env                        = var.env
+  backend_zip_path           = var.backend_zip_path
+  gcp_project_id             = var.gcp_project_id
+  gcp_docai_location         = var.gcp_docai_location
+  gcp_docai_processor_id     = var.gcp_docai_processor_id
+  gcp_docai_ocr_processor_id = var.gcp_docai_ocr_processor_id
+  gemini_model               = var.gemini_model
+  gemini_api_key             = var.gemini_api_key
+  ocr_engine                 = var.ocr_engine
+  gcp_sa_key_json            = base64decode(module.gcp.sa_private_key)
+  frontend_origins           = var.frontend_origins
 }

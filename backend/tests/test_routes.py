@@ -163,3 +163,42 @@ def test_handler_cua_mien_tu_choi_route_ngoai_mien(domain):
             f"{domain}_handler KHÔNG được phục vụ {method} {path}"
         )
         assert "Không có route" in json.loads(response["body"])["error"]
+
+
+# --- Biến môi trường mà engine OCR cần phải có mặt trong Lambda -------------
+
+
+def terraform_lambda_env() -> set[str]:
+    block = _hcl_block(MAIN_TF.read_text(encoding="utf-8"), "lambda_env")
+    return set(re.findall(r"^\s*(\w+)\s*=", block, re.M))
+
+
+def test_moi_engine_app_cho_chon_deu_co_du_env_tren_lambda():
+    """Giao diện cho chọn engine nào thì Lambda phải chạy được engine đó.
+
+    Lỗi đã có thật: `APP_ENGINES` gồm `dococr` (cần `DOCAI_OCR_PROCESSOR_ID`)
+    nhưng `lambda_env` chỉ truyền `DOCAI_PROCESSOR_ID` của Form Parser — engine
+    mà app KHÔNG còn cho chọn. Deploy xong, bấm "Chạy lại với Document AI" là nổ
+    "Thiếu DOCAI_PROJECT / DOCAI_PROCESSOR_ID" ngay trên production.
+
+    Không test nào khác bắt được: pytest chạy offline nên không đọc Terraform,
+    còn `terraform validate` không biết gì về registry engine bên Python.
+    """
+    from common import ocr_engines
+
+    env_tren_lambda = terraform_lambda_env()
+
+    thieu = {}
+    for name in ocr_engines.APP_ENGINES:
+        spec = ocr_engines.ENGINES[name]
+        can = [spec["processor_env"]] if spec["processor_env"] else []
+        if spec["cloud"] == "google":
+            can.append("DOCAI_PROJECT")
+        con_thieu = [bien for bien in can if bien not in env_tren_lambda]
+        if con_thieu:
+            thieu[name] = con_thieu
+
+    assert not thieu, (
+        f"engine app cho chọn nhưng Lambda thiếu biến môi trường: {thieu}. "
+        f"Thêm vào `local.lambda_env` trong infra/modules/aws/main.tf."
+    )
