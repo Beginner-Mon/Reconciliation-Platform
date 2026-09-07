@@ -192,7 +192,7 @@ Docker: [infra/statemachine-test/README.md](infra/statemachine-test/README.md).
 ## 6. Deploy lên AWS
 
 ```powershell
-infra\scripts\build_backend.ps1          # -> infra/artifacts/backend.zip
+infra\scripts\build_backend.ps1          # -> 10 zip trong infra/artifacts/
 
 cd infra
 .\bin\terraform.exe init

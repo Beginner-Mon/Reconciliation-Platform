@@ -38,7 +38,7 @@ module "aws" {
 
   app_name                   = var.app_name
   env                        = var.env
-  backend_zip_path           = var.backend_zip_path
+  artifacts_dir              = var.artifacts_dir
   gcp_project_id             = var.gcp_project_id
   gcp_docai_location         = var.gcp_docai_location
   gcp_docai_processor_id     = var.gcp_docai_processor_id

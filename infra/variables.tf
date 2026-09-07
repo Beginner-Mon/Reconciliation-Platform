@@ -16,10 +16,14 @@ variable "env" {
   default     = "dev"
 }
 
-variable "backend_zip_path" {
-  description = "Đường dẫn zip code backend (tạo bằng scripts/build_backend.ps1)"
+variable "artifacts_dir" {
+  description = <<-EOT
+    Thư mục chứa zip của TỪNG Lambda, dựng bằng scripts/build_backend.ps1.
+    Mỗi function một gói riêng chỉ chứa thư viện nó cần — bảng gói ở
+    backend/packaging.py.
+  EOT
   type        = string
-  default     = "artifacts/backend.zip"
+  default     = "artifacts"
 }
 
 variable "gcp_project_id" {

@@ -14,7 +14,7 @@ infra/
 ├── main.tf                      providers (aws, google, random) + gọi module
 ├── variables.tf / outputs.tf
 ├── dev.tfvars.example
-├── scripts/build_backend.ps1    đóng gói backend.zip
+├── scripts/build_backend.ps1    đóng gói 10 zip, mỗi Lambda một gói
 └── modules/
     ├── aws/
     │   ├── main.tf              toàn bộ tài nguyên AWS
@@ -36,7 +36,12 @@ bằng event.
 `projects`, `documents` (+ GSI `project_id-index`, `po_number-index`),
 `processing_runs`, `reconciliations`, `audit_log` (PK `entity_id`, SK `timestamp`).
 
-### Lambda (Python 3.11) — 10 function, dùng chung 1 zip
+### Lambda (Python 3.11) — 10 function, **mỗi cái một zip riêng**
+
+Bảng gói ở `backend/packaging.py`; code ứng dụng (150 KB) chép vào mọi gói, chỉ
+**thư viện** mới chia. `boto3` không nằm trong gói nào — runtime Lambda đã có.
+Đo được: 340 MB → **39,6 MB**, `mark-failed` còn 0,1 MB, bốn `api-*` còn 2,5 MB.
+
 | Function | Handler | Timeout | Memory |
 |---|---|---|---|
 | `api-projects` | `api.handler.projects_handler` | 30 | 512 |
@@ -123,7 +128,8 @@ Service account quyền tối thiểu, key → `aws_secretsmanager_secret`.
 
 `scripts/build_backend.ps1` cài dependency runtime (`requirements.txt`, KHÔNG
 gồm pytest/moto ở `requirements-dev.txt`), copy `schemas/ core/ common/
-workers/ api/`, xoá `__pycache__`, nén thành `artifacts/backend.zip`.
+workers/ api/`, xoá `__pycache__`, nén thành `artifacts/<tên function>.zip` —
+mỗi Lambda MỘT gói, chỉ chứa thư viện chính nó cần (bảng ở `backend/packaging.py`).
 
 ## 6. Lưu ý
 

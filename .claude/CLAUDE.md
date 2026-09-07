@@ -131,6 +131,23 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   `DOCUMENT_FIELDS`. `audit_log` có nhãn engine nhưng **chưa route API nào đọc**,
   nên không lưu ở record document thì giao diện không biết chứng từ nào chạy
   bằng gì.
+- **Mỗi Lambda MỘT gói riêng**, bảng gói ở `backend/packaging.py` và
+  `tests/test_packaging.py` khoá nó khớp `local.workers` + `local.api_functions`
+  bên `main.tf`. Code ứng dụng (150 KB) chép vào **mọi** gói — tách ra không
+  tiết kiệm gì mà phải bổ `common/` thành nhiều mảnh; chỉ **thư viện** mới chia.
+  `boto3` KHÔNG vào gói nào (runtime Lambda đã có, 20 MB), nhưng vẫn ở
+  `requirements.txt` cho dev server. Đo được: 340 MB → 39,6 MB, `mark-failed`
+  0,1 MB, bốn `api-*` 2,5 MB. Cái tiết kiệm là **cold start**, KHÔNG phải phân
+  quyền — IAM gắn vào function chứ không gắn vào gói, và 5 role đã tách sẵn.
+- `workers/__init__.py` phải **RỖNG**. Nó từng `from .reconcile import
+  run_reconciliation`, mà Python chạy `__init__.py` cho mọi lần import
+  `workers.xxx` — nghĩa là `workers.ocr` kéo theo `core/` → `schemas/` →
+  pydantic dù không dùng, và gói `ocr`/`mark-failed` phình vô cớ. Đã có test chặn.
+- Script build **kiểm sự HIỆN DIỆN** của module (`phai_co_module`), không nạp
+  thử: wheel cài bằng `--platform manylinux2014` chứa phần biên dịch cho Linux
+  (`pydantic_core._pydantic_core`), nạp trên Windows là chết dù gói hoàn toàn
+  đúng cho Lambda. Và `Compress-Archive` của PS 5.1 hay dính "file is being used
+  by another process" khi antivirus quét — dùng `[System.IO.Compression.ZipFile]`.
 - **Client Textract phải đi qua `common/aws_real.py`**, KHÔNG dùng
   `boto3.client("textract")` trơn. Mọi client khác trong repo đọc
   `AWS_ENDPOINT_URL` để trỏ vào moto; moto có Textract giả trả `Block` bịa kèm
@@ -235,7 +252,7 @@ cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers
 cd infra; .\bin\terraform.exe validate
 cd infra; .\bin\terraform.exe plan -var-file=dev.tfvars
 
-infra\scripts\build_backend.ps1                            # -> artifacts/backend.zip
+infra\scripts\build_backend.ps1        # -> 10 zip, MỖI Lambda một gói riêng
 ```
 
 Terraform **không** cài được vào `.venv` — `.venv` chỉ chứa package PyPI, còn

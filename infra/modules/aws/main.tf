@@ -324,14 +324,22 @@ locals {
 resource "aws_lambda_function" "worker" {
   for_each = local.workers
 
-  function_name    = "${var.app_name}-${each.key}-${var.env}"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = each.value.handler
-  runtime          = "python3.11"
-  timeout          = each.value.timeout
-  memory_size      = each.value.memory
-  filename         = var.backend_zip_path
-  source_code_hash = filebase64sha256(var.backend_zip_path)
+  function_name = "${var.app_name}-${each.key}-${var.env}"
+  role          = aws_iam_role.lambda_role.arn
+  handler       = each.value.handler
+  runtime       = "python3.11"
+  timeout       = each.value.timeout
+  memory_size   = each.value.memory
+
+  # MỖI Lambda một gói riêng, chỉ chứa thư viện chính nó cần. Bảng gói ở
+  # backend/packaging.py, tên file zip trùng tên function ở local.workers —
+  # tests/test_packaging.py khoá hai bên lại với nhau.
+  #
+  # Trước đây cả 10 function dùng chung một zip 34 MB. Đo được: mark-failed
+  # xuống 0,1 MB, bốn api xuống 2,5 MB. Cái tiết kiệm là COLD START, không phải
+  # dung lượng — IAM vốn đã tách sẵn, gói không liên quan tới phân quyền.
+  filename         = "${var.artifacts_dir}/${each.key}.zip"
+  source_code_hash = filebase64sha256("${var.artifacts_dir}/${each.key}.zip")
 
   environment {
     variables = local.lambda_env
@@ -408,14 +416,16 @@ resource "aws_iam_role_policy_attachment" "api" {
 resource "aws_lambda_function" "api" {
   for_each = local.api_functions
 
-  function_name    = "${var.app_name}-api-${each.key}-${var.env}"
-  role             = aws_iam_role.api[each.key].arn
-  handler          = each.value.handler
-  runtime          = "python3.11"
-  timeout          = each.value.timeout
-  memory_size      = each.value.memory
-  filename         = var.backend_zip_path
-  source_code_hash = filebase64sha256(var.backend_zip_path)
+  function_name = "${var.app_name}-api-${each.key}-${var.env}"
+  role          = aws_iam_role.api[each.key].arn
+  handler       = each.value.handler
+  runtime       = "python3.11"
+  timeout       = each.value.timeout
+  memory_size   = each.value.memory
+
+  # Gói riêng, tên file có tiền tố "api-" để không đụng tên worker.
+  filename         = "${var.artifacts_dir}/api-${each.key}.zip"
+  source_code_hash = filebase64sha256("${var.artifacts_dir}/api-${each.key}.zip")
 
   environment {
     # STATE_MACHINE_ARN chỉ đặt cho function thật sự khởi động execution. Ba

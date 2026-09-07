@@ -6,8 +6,9 @@ variable "env" {
   type = string
 }
 
-variable "backend_zip_path" {
-  type = string
+variable "artifacts_dir" {
+  description = "Thư mục chứa zip của TỪNG Lambda (<tên function>.zip)"
+  type        = string
 }
 
 variable "gcp_project_id" {

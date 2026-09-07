@@ -73,7 +73,8 @@ Mở `dev.tfvars`, dán vào 2 chỗ đánh dấu:
 powershell -ExecutionPolicy Bypass -File .\scripts\build_backend.ps1
 ```
 
-Tạo ra `artifacts/backend.zip` (code Python chạy trong Lambda).
+Tạo ra 10 file `artifacts/<tên function>.zip` — mỗi Lambda một gói riêng, chỉ
+chứa thư viện nó cần. `boto3` không nằm trong gói nào vì runtime Lambda đã có.
 
 ## 6. Deploy
 
