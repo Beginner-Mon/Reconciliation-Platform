@@ -668,3 +668,48 @@ def test_project_khong_ton_tai_tra_404(aws):
 def test_route_khong_ton_tai_tra_404(aws):
     status, body = call("GET", "/khong-co-gi")
     assert status == 404
+
+
+def test_document_ids_rong_KHONG_duoc_hieu_la_tat_ca(aws, started_executions):
+    """`if requested:` coi `[]` là falsy nên rơi vào nhánh "chạy tất cả" — ngược
+    hoàn toàn ý định của người gọi.
+
+    Hôm nay chưa ai gửi mảng rỗng nên lỗi chưa lộ. Nhưng giao diện sắp có chọn
+    nhiều chứng từ: bỏ chọn hết rồi bấm nhầm là chạy cả project và tiêu tiền AI
+    cho mọi chứng từ. Phải phân biệt "không khai" với "khai rỗng".
+    """
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
+    for document in created:
+        put_file(document["s3_key"])
+
+    status, body = call("POST", f"/projects/{project_id}/process", {"document_ids": []})
+
+    assert status == 400
+    assert "document_ids" in body["error"]
+    assert started_executions == [], "KHÔNG được chạy chứng từ nào"
+
+
+def test_khong_khai_document_ids_van_la_chay_tat_ca(aws, started_executions):
+    """Nửa còn lại của cùng một luật: bỏ trống vẫn phải nghĩa là cả project."""
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
+    for document in created:
+        put_file(document["s3_key"])
+
+    status, body = call("POST", f"/projects/{project_id}/process")
+
+    assert status == 202
+    assert len(body["processing"]) == 2
+
+
+def test_document_ids_sai_kieu_bi_tu_choi(aws, started_executions):
+    project_id = make_project()
+    put_file(add_documents(project_id, "PO-001.pdf")[0]["s3_key"])
+
+    status, body = call(
+        "POST", f"/projects/{project_id}/process", {"document_ids": "doc-1"}
+    )
+
+    assert status == 400
+    assert started_executions == []

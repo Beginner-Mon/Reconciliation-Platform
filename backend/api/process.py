@@ -161,15 +161,29 @@ def process_project(params: dict, body: dict) -> dict:
         raise BadRequest("Project chưa có document nào")
     documents.sort(key=lambda d: (d.get("uploaded_at") or "", d["document_id"]))
 
+    # KHÔNG KHAI `document_ids` nghĩa là cả project — "chạy hết" chỉ là trường
+    # hợp suy biến của "chạy những cái này", không phải nhánh code riêng.
+    #
+    # Nhưng phải phân biệt "không khai" (None) với "khai rỗng" ([]). Viết
+    # `if requested:` thì `[]` là falsy và rơi vào nhánh chạy TẤT CẢ — ngược
+    # hoàn toàn ý định. Giao diện có chọn nhiều chứng từ thì bỏ chọn hết rồi bấm
+    # nhầm sẽ tiêu tiền AI cho cả project.
     requested = body.get("document_ids")
-    if requested:
+    if requested is None:
+        candidates = documents
+    else:
+        if not isinstance(requested, list):
+            raise BadRequest("document_ids phải là danh sách")
+        if not requested:
+            raise BadRequest(
+                "document_ids rỗng — chưa chọn chứng từ nào. Bỏ hẳn trường này "
+                "nếu muốn xử lý cả project."
+            )
         by_id = {d["document_id"]: d for d in documents}
         missing = [i for i in requested if i not in by_id]
         if missing:
             raise BadRequest(f"document_id không thuộc project: {', '.join(missing)}")
         candidates = [by_id[i] for i in requested]
-    else:
-        candidates = documents
 
     force = bool(body.get("force"))
     force_edited = bool(body.get("force_edited"))

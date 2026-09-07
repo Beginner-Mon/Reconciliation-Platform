@@ -1,4 +1,4 @@
-import { Check, RotateCw, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, ApiError, uploadFile } from "../api";
@@ -8,9 +8,9 @@ import { DocumentViewer } from "../components/DocumentViewer";
 import { EditPanel } from "../components/EditPanel";
 import { ExtractionPanel } from "../components/ExtractionPanel";
 import { WorkflowView } from "../components/WorkflowView";
-import { DEFAULT_OCR_ENGINE, OCR_ENGINES, SEVERITY_ORDER } from "../format";
+import { SEVERITY_ORDER } from "../format";
 import { useProject } from "../hooks/useProject";
-import type { Discrepancy, DocumentView } from "../types";
+import type { Discrepancy } from "../types";
 
 type TabKey = "document" | "extract" | "flags" | "edit";
 
@@ -26,6 +26,8 @@ export function ProjectDetail() {
   const [discrepancies, setDiscrepancies] = useState<Discrepancy[]>([]);
   /** Khung phải chuyển sang màn hình tiến trình khi bấm Xử lý, ở đó tới khi xong. */
   const [showWorkflow, setShowWorkflow] = useState(false);
+  /** Chứng từ đã TÍCH CHỌN — khác `selectedId` (chứng từ đang xem ở khung phải). */
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
 
   const active = data?.run?.is_active ?? false;
   const reconciliation = data?.latest_reconciliation ?? null;
@@ -100,12 +102,49 @@ export function ProjectDetail() {
     );
   }
 
-  async function process() {
-    if (!projectId) return;
+  /** MỘT hành động cho mọi phạm vi: chọn 0 chứng từ là cả project.
+   *
+   *  Chọn hay không quyết định luôn ý nghĩa của lần chạy:
+   *
+   *    không chọn  -> chỉ chạy cái CHƯA xong (idempotent, tiết kiệm tiền)
+   *    có chọn     -> chạy đúng chừng đó, KỂ CẢ đã xong (`force`)
+   *
+   *  Người dùng đã chủ động tích vào chứng từ đã VALIDATED thì ý họ là "chạy
+   *  lại cái này" — bỏ qua nó mới là hành vi khó hiểu.
+   */
+  async function process(engine: string) {
+    if (!projectId || !data) return;
+
+    const chon = data.documents.filter((d) => checkedIds.includes(d.document_id));
+
+    // `force_edited` cho AI ghi đè công review và KHÔNG lấy lại được. Hỏi trước.
+    const daSua = chon.filter((d) => (d.edited_fields ?? []).length > 0);
+    if (
+      daSua.length > 0 &&
+      !window.confirm(
+        `${daSua.length} chứng từ đã sửa tay:\n` +
+          daSua.map((d) => `  • ${d.file_name}`).join("\n") +
+          `\n\nChạy lại sẽ ghi đè bằng dữ liệu AI và không lấy lại được. Tiếp tục?`,
+      )
+    ) {
+      return;
+    }
+
     setShowWorkflow(true);
     await run(
       async () => {
-        const result = await api.process(projectId);
+        const result = await api.process(projectId, {
+          engine,
+          // Bỏ HẲN trường này khi không chọn gì — gửi mảng rỗng là lỗi 400,
+          // cố ý, để bỏ chọn hết rồi bấm nhầm không chạy cả project.
+          ...(chon.length
+            ? {
+                document_ids: chon.map((d) => d.document_id),
+                force: true,
+                force_edited: true,
+              }
+            : {}),
+        });
         await startPolling();
         return result;
       },
@@ -116,47 +155,23 @@ export function ProjectDetail() {
           setTab("flags");
           return `Mọi chứng từ đã xử lý, chỉ chạy lại đối soát${skipped ? ` (bỏ qua ${skipped})` : ""}.`;
         }
-        return `Đang xử lý ${result.processing.length} chứng từ${
+        return `Đang xử lý ${result.processing.length} chứng từ bằng ${engine}${
           skipped ? `, bỏ qua ${skipped} đã xong` : ""
         }.`;
       },
     );
   }
 
-  /** Chạy lại ĐÚNG một chứng từ với engine đã chọn.
-   *
-   *  `force` là bắt buộc: chứng từ đã VALIDATED bị `/process` bỏ qua — đó chính
-   *  là cơ chế cache tiết kiệm tiền. Nút này cố ý bỏ qua cache, nên phải nói rõ
-   *  là tốn tiền.
-   */
-  async function rerun(document: DocumentView, engine: string) {
+  /** Chỉ so các chứng từ với nhau — không gọi AI, không tốn tiền. */
+  async function reconcile() {
     if (!projectId) return;
-
-    // `force_edited` cho AI ghi đè công review và KHÔNG lấy lại được. Hỏi trước.
-    const edited = document.edited_fields ?? [];
-    if (
-      edited.length > 0 &&
-      !window.confirm(
-        `"${document.file_name}" đã sửa tay (${edited.join(", ")}).\n\n` +
-          `Chạy lại sẽ ghi đè bằng dữ liệu AI và không lấy lại được. Tiếp tục?`,
-      )
-    ) {
-      return;
-    }
-
-    setShowWorkflow(true);
     await run(
       async () => {
-        const result = await api.process(projectId, {
-          document_ids: [document.document_id],
-          force: true,
-          force_edited: true,
-          engine,
-        });
-        await startPolling();
+        const result = await api.reconcile(projectId);
+        await refresh();
         return result;
       },
-      () => `Đang chạy lại ${document.file_name} bằng ${engine}.`,
+      (result) => `Đối soát xong: ${result.discrepancy_count} mâu thuẫn.`,
     );
   }
 
@@ -195,17 +210,31 @@ export function ProjectDetail() {
           projectName={data.project.name}
           documents={data.documents}
           selectedId={selectedId}
+          checkedIds={checkedIds}
           running={active}
           busy={busy}
-          engines={OCR_ENGINES}
-          defaultEngine={DEFAULT_OCR_ENGINE}
+          canReconcile={data.documents.some((d) => d.status === "VALIDATED")}
           onSelect={(document) => {
             setSelectedId(document.document_id);
             if (showWorkflow && !active) setShowWorkflow(false);
           }}
+          onToggle={(documentId) =>
+            setCheckedIds((truoc) =>
+              truoc.includes(documentId)
+                ? truoc.filter((id) => id !== documentId)
+                : [...truoc, documentId],
+            )
+          }
+          onToggleAll={() =>
+            setCheckedIds((truoc) =>
+              truoc.length === data.documents.length
+                ? []
+                : data.documents.map((d) => d.document_id),
+            )
+          }
           onUpload={upload}
           onProcess={process}
-          onRerun={rerun}
+          onReconcile={reconcile}
         />
 
         {/* Khung phải — mọi thứ về xử lý và xem kết quả đều ở đây */}
@@ -263,28 +292,12 @@ export function ProjectDetail() {
                       </p>
                     ) : (
                       <>
-                        <div className="mb-4 flex items-center justify-between">
-                          <h3 className="font-semibold text-slate-700">
-                            {reconciliation.discrepancy_count} mâu thuẫn
-                          </h3>
-                          <button
-                            onClick={() =>
-                              projectId &&
-                              run(
-                                async () => {
-                                  const result = await api.reconcile(projectId);
-                                  await refresh();
-                                  return result;
-                                },
-                                (result) => `Đối soát xong: ${result.discrepancy_count} mâu thuẫn.`,
-                              )
-                            }
-                            disabled={busy || active}
-                            className="flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                          >
-                            <RotateCw size={14} /> Đối soát lại
-                          </button>
-                        </div>
+                        {/* Nút "Đối chiếu lại" nằm ở sidebar, cạnh nút Xử lý —
+                            để thấy rõ đây là hai hành động của hệ thống, chứ
+                            không phải một thao tác chôn trong tab kết quả. */}
+                        <h3 className="mb-4 font-semibold text-slate-700">
+                          {reconciliation.discrepancy_count} mâu thuẫn
+                        </h3>
 
                         {sorted.length === 0 ? (
                           <p className="flex items-center justify-center gap-2 py-12 text-center text-emerald-700"><Check size={18} />

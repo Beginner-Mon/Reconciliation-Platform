@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  ChevronDown,
   Circle,
   Loader2,
   Play,
@@ -10,16 +11,18 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { DocumentView, OcrEngineChoice } from "../types";
+import { DEFAULT_OCR_ENGINE, OCR_ENGINES } from "../format";
+import type { DocumentView } from "../types";
 
-/** Sidebar: danh sách file, nút Xử lý cả project, và nút chạy lại TỪNG file.
+/** Sidebar: danh sách chứng từ có chọn nhiều, và HAI hành động của hệ thống.
  *
- *  Nút chạy lại mở menu chọn engine OCR. Đây là cách duy nhất so hai engine
- *  trên CÙNG một chứng từ — engine trước đây là biến môi trường của tiến trình
- *  nên cả project buộc phải dùng chung một engine.
+ *  Hai hành động đó khác nhau ở chỗ tốn tiền hay không:
  *
- *  Không đặt thanh tiến độ hay thông báo trạng thái ở đây — mọi thứ thể hiện
- *  quá trình xử lý đều nằm ở khung phải.
+ *    Xử lý       đọc chữ -> trích xuất -> kiểm tra -> đối chiếu   GỌI AI, tốn tiền
+ *    Đối chiếu   chỉ so các chứng từ với nhau                     miễn phí
+ *
+ *  "Xử lý tất cả" chỉ là trường hợp không chọn gì — không phải một nút riêng.
+ *  Nhờ vậy chạy 1, chạy 3 hay chạy hết đều là cùng một thao tác.
  */
 
 function StatusIcon({ document }: { document: DocumentView }) {
@@ -33,38 +36,40 @@ interface Props {
   projectName: string;
   documents: DocumentView[];
   selectedId: string | null;
+  checkedIds: string[];
   running: boolean;
   busy: boolean;
-  engines: readonly OcrEngineChoice[];
-  defaultEngine: string;
+  canReconcile: boolean;
   onSelect: (document: DocumentView) => void;
+  onToggle: (documentId: string) => void;
+  onToggleAll: () => void;
   onUpload: (files: FileList) => void;
-  onProcess: () => void;
-  onRerun: (document: DocumentView, engine: string) => void;
+  onProcess: (engine: string) => void;
+  onReconcile: () => void;
 }
 
 export function DocumentSidebar({
   projectName,
   documents,
   selectedId,
+  checkedIds,
   running,
   busy,
-  engines,
-  defaultEngine,
+  canReconcile,
   onSelect,
+  onToggle,
+  onToggleAll,
   onUpload,
   onProcess,
-  onRerun,
+  onReconcile,
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
-  /** document_id đang mở menu chọn engine, null là không mở cái nào. */
-  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [engine, setEngine] = useState<string>(DEFAULT_OCR_ENGINE);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  // Bấm ra ngoài hoặc Esc thì đóng menu. Thiếu cái này thì menu dính lại khi
-  // người dùng chuyển sang chứng từ khác.
   useEffect(() => {
-    if (!menuFor) return;
-    const close = () => setMenuFor(null);
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && close();
     window.document.addEventListener("click", close);
     window.document.addEventListener("keydown", onKey);
@@ -72,9 +77,12 @@ export function DocumentSidebar({
       window.document.removeEventListener("click", close);
       window.document.removeEventListener("keydown", onKey);
     };
-  }, [menuFor]);
+  }, [menuOpen]);
 
-  const defaultLabel = defaultEngine ? ` (mặc định: ${defaultEngine})` : "";
+  const checked = new Set(checkedIds);
+  const soChon = checked.size;
+  const tatCa = documents.length > 0 && soChon === documents.length;
+  const khoa = busy || running || documents.length === 0;
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white">
@@ -87,10 +95,18 @@ export function DocumentSidebar({
         </h1>
       </div>
 
-      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
-        <span className="text-xs font-semibold tracking-wide text-slate-500">
+      <div className="flex items-center justify-between border-b border-slate-100 py-2 pl-3 pr-4">
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold tracking-wide text-slate-500">
+          <input
+            type="checkbox"
+            checked={tatCa}
+            onChange={onToggleAll}
+            disabled={documents.length === 0}
+            className="h-3.5 w-3.5 accent-sky-600"
+            aria-label="Chọn tất cả chứng từ"
+          />
           CHỨNG TỪ ({documents.length})
-        </span>
+        </label>
         <input
           ref={fileInput}
           type="file"
@@ -119,21 +135,28 @@ export function DocumentSidebar({
           </p>
         ) : (
           documents.map((document) => {
-            const selected = document.document_id === selectedId;
-            const menuOpen = menuFor === document.document_id;
+            const dangXem = document.document_id === selectedId;
             return (
               <div
                 key={document.document_id}
-                className={`relative flex items-center border-l-2 pr-2 transition ${
-                  selected
+                className={`flex items-center gap-2 border-l-2 py-2.5 pl-3 pr-4 transition ${
+                  dangXem
                     ? "border-sky-500 bg-sky-50"
                     : "border-transparent hover:bg-slate-50"
                 }`}
               >
+                <input
+                  type="checkbox"
+                  checked={checked.has(document.document_id)}
+                  onChange={() => onToggle(document.document_id)}
+                  disabled={busy || running}
+                  className="h-3.5 w-3.5 shrink-0 accent-sky-600 disabled:opacity-40"
+                  aria-label={`Chọn ${document.file_name}`}
+                />
                 <button
                   onClick={() => onSelect(document)}
-                  className={`flex min-w-0 flex-1 items-center gap-2 py-2.5 pl-4 text-left text-sm ${
-                    selected ? "text-slate-900" : "text-slate-700"
+                  className={`flex min-w-0 flex-1 items-center gap-2 text-left text-sm ${
+                    dangXem ? "text-slate-900" : "text-slate-700"
                   }`}
                 >
                   <span className="flex w-4 shrink-0 justify-center">
@@ -152,91 +175,104 @@ export function DocumentSidebar({
                     )}
                   </span>
                 </button>
-
-                <button
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMenuFor(menuOpen ? null : document.document_id);
-                  }}
-                  disabled={busy || running || engines.length === 0}
-                  title="Chạy lại chứng từ này với engine khác"
-                  aria-label="Chạy lại chứng từ này"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-400 transition hover:bg-white hover:text-sky-700 disabled:opacity-30"
-                >
-                  <RotateCw size={14} />
-                </button>
-
-                {menuOpen && (
-                  <div
-                    onClick={(event) => event.stopPropagation()}
-                    className="absolute right-2 top-full z-20 w-64 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
-                  >
-                    <p className="border-b border-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
-                      CHẠY LẠI VỚI
-                    </p>
-                    {engines.map((engine) => (
-                      <button
-                        key={engine.name}
-                        onClick={() => {
-                          setMenuFor(null);
-                          onRerun(document, engine.name);
-                        }}
-                        className="block w-full px-3 py-2 text-left text-sm transition hover:bg-slate-50"
-                      >
-                        <span className="flex items-center gap-1.5 font-medium text-slate-800">
-                          {engine.name}
-                          {engine.name === document.ocr_engine && (
-                            <span className="text-xs font-normal text-slate-400">
-                              · đang dùng
-                            </span>
-                          )}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-slate-500">
-                          {engine.label}
-                        </span>
-                        {/* Cảnh báo đặt NGAY chỗ chọn, không chôn trong tài
-                            liệu: đo trên hoá đơn thật thì Textract mất gần hết
-                            dấu tiếng Việt, dù số vẫn đọc đúng. */}
-                        {!engine.supportsVietnamese && (
-                          <span className="mt-1 flex items-center gap-1 text-xs text-amber-700">
-                            <AlertTriangle size={11} /> không hỗ trợ tiếng Việt
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                    <p className="border-t border-slate-100 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
-                      Chạy lại là gọi AI lần nữa và tốn tiền lần nữa.
-                    </p>
-                  </div>
-                )}
               </div>
             );
           })
         )}
       </div>
 
-      <div className="border-t border-slate-200 p-3">
-        <button
-          onClick={onProcess}
-          disabled={busy || running || documents.length === 0}
-          title={`Xử lý chứng từ chưa chạy${defaultLabel}`}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-50"
-        >
-          {running ? (
-            <>
-              <Loader2 size={16} className="animate-spin" /> Đang chạy…
-            </>
-          ) : (
-            <>
-              <Play size={16} /> Xử lý
-            </>
+      <div className="space-y-2 border-t border-slate-200 p-3">
+        <div className="relative flex">
+          <button
+            onClick={() => onProcess(engine)}
+            disabled={khoa}
+            title={
+              soChon
+                ? `Chạy lại ${soChon} chứng từ đã chọn bằng ${engine}`
+                : `Xử lý chứng từ chưa chạy bằng ${engine}`
+            }
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-l-lg bg-sky-600 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-50"
+          >
+            {running ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> Đang chạy…
+              </>
+            ) : (
+              <>
+                <Play size={16} />
+                {soChon ? `Xử lý ${soChon} chứng từ` : "Xử lý tất cả"}
+              </>
+            )}
+          </button>
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpen((value) => !value);
+            }}
+            disabled={khoa}
+            aria-label="Chọn engine OCR"
+            title={`Engine OCR: ${engine}`}
+            className="flex w-9 items-center justify-center rounded-r-lg border-l border-sky-500 bg-sky-600 text-white transition hover:bg-sky-700 disabled:opacity-50"
+          >
+            <ChevronDown size={15} />
+          </button>
+
+          {menuOpen && (
+            <div
+              onClick={(event) => event.stopPropagation()}
+              className="absolute bottom-full right-0 z-20 mb-1 w-64 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
+            >
+              <p className="border-b border-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
+                ĐỌC CHỮ BẰNG
+              </p>
+              {OCR_ENGINES.map((lua_chon) => (
+                <button
+                  key={lua_chon.name}
+                  onClick={() => {
+                    setEngine(lua_chon.name);
+                    setMenuOpen(false);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm transition hover:bg-slate-50"
+                >
+                  <span className="flex items-center gap-1.5 font-medium text-slate-800">
+                    {lua_chon.name}
+                    {lua_chon.name === engine && (
+                      <Check size={13} className="text-sky-600" />
+                    )}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    {lua_chon.label}
+                  </span>
+                  {/* Cảnh báo đặt NGAY chỗ chọn, không chôn trong tài liệu: đo
+                      trên hoá đơn thật thì Textract mất gần hết dấu tiếng Việt,
+                      dù số vẫn đọc đúng. */}
+                  {!lua_chon.supportsVietnamese && (
+                    <span className="mt-1 flex items-center gap-1 text-xs text-amber-700">
+                      <AlertTriangle size={11} /> không hỗ trợ tiếng Việt
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           )}
+        </div>
+
+        {/* Đối chiếu KHÔNG gọi AI nên bấm thoải mái. Để cạnh nút Xử lý để thấy
+            rõ đây là hai việc khác nhau, không phải hai bước của một việc. */}
+        <button
+          onClick={onReconcile}
+          disabled={busy || running || !canReconcile}
+          title="So các chứng từ đã xử lý với nhau. Không gọi AI, không tốn tiền."
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+        >
+          <RotateCw size={14} /> Đối chiếu lại
         </button>
-        {defaultEngine && (
-          <p className="mt-1.5 text-center text-xs text-slate-400">
-            engine mặc định: {defaultEngine}
-          </p>
-        )}
+
+        <p className="text-center text-xs text-slate-400">
+          {soChon
+            ? `${soChon} đã chọn · chạy lại kể cả đã xong`
+            : "không chọn = chỉ chạy cái chưa xong"}
+        </p>
       </div>
     </aside>
   );
