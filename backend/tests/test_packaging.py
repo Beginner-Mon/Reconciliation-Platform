@@ -130,3 +130,80 @@ def test_code_ung_dung_chep_het_vao_moi_goi():
 def test_ten_goi_dung_dang_dat_ten_file(ten):
     """Script build ghi ra `artifacts/<tên>.zip`, Terraform đọc đúng đường đó."""
     assert re.fullmatch(r"[a-z][a-z0-9-]*", ten), ten
+
+
+# --- Thư viện nạp NGAY lúc import: thiếu là chết cold start ----------------
+
+# Runtime python3.11 của Lambda có sẵn, không gói nào phải khai.
+RUNTIME_CO_SAN = {"boto3", "botocore"}
+
+
+def _import_ngay() -> dict[str, str]:
+    """Thư viện bên thứ ba được import ở MỨC MODULE của code ứng dụng.
+
+    Đây là thứ quyết định gói có chạy nổi hay không: thiếu một cái là Lambda
+    chết ngay lúc cold start, trước khi handler chạy dòng đầu tiên.
+
+    SUY RA bằng AST chứ không khai tay — khai tay đúng là chỗ đã sai: bảng gói
+    ban đầu bỏ `pydantic` khỏi ocr/mark-failed vì tôi đọc nhầm chuỗi import
+    `common/__init__ -> ai_clients -> schemas -> pydantic`.
+
+    Import LƯỜI (google nằm trong thân hàm ở `ai_clients.py`) không tính ở đây —
+    chúng chỉ chết khi hàm đó được gọi, nên vẫn phải khai tay trong `requires`.
+    """
+    import ast
+    import sys
+
+    backend = pathlib.Path(__file__).resolve().parents[1]
+    stdlib = set(sys.stdlib_module_names)
+    app = set(APP_MODULES) | {"packaging"}
+
+    thay: dict[str, str] = {}
+    for mod in APP_MODULES:
+        for tep in (backend / mod).rglob("*.py"):
+            cay = ast.parse(tep.read_text(encoding="utf-8"))
+            trong_ham = {
+                dong
+                for ham in ast.walk(cay)
+                if isinstance(ham, (ast.FunctionDef, ast.AsyncFunctionDef))
+                for dong in range(ham.lineno, (ham.end_lineno or ham.lineno) + 1)
+            }
+            for node in ast.walk(cay):
+                if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                    continue
+                if isinstance(node, ast.ImportFrom) and node.level:
+                    continue  # import tương đối = code của mình
+                ten = (
+                    (node.module or "").split(".")[0]
+                    if isinstance(node, ast.ImportFrom)
+                    else node.names[0].name.split(".")[0]
+                )
+                if not ten or ten in stdlib or ten in app or node.lineno in trong_ham:
+                    continue
+                thay.setdefault(ten, f"{mod}/{tep.name}")
+    return thay
+
+
+def test_moi_goi_du_thu_vien_nap_ngay_luc_import():
+    """Code ứng dụng chép vào MỌI gói, nên gói nào cũng phải đủ thư viện mà code
+    đó nạp ngay lúc import — kể cả `mark-failed` chỉ đổi status DynamoDB.
+
+    Bỏ sót thì Lambda chết ở cold start với ModuleNotFoundError, và chỉ lộ ra
+    khi chạy thật trên AWS.
+    """
+    can = {ten for ten in _import_ngay() if ten not in RUNTIME_CO_SAN}
+    assert can, "AST không tìm thấy thư viện nào — hàm dò hỏng rồi"
+
+    for goi, spec in PACKAGES.items():
+        khai = {yc.split(">")[0].split("=")[0].split("[")[0] for yc in spec["requires"]}
+        thieu = {ten for ten in can if ten not in khai}
+        assert not thieu, (
+            f"gói '{goi}' thiếu {sorted(thieu)} — code ứng dụng nạp nó ngay lúc "
+            f"import (xem {[_import_ngay()[t] for t in sorted(thieu)]})"
+        )
+
+
+def test_khong_khai_thua_thu_vien_runtime_da_co():
+    for goi, spec in PACKAGES.items():
+        khai = {yc.split(">")[0].split("=")[0] for yc in spec["requires"]}
+        assert not (khai & RUNTIME_CO_SAN), goi

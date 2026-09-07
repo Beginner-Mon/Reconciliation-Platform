@@ -40,7 +40,7 @@ PACKAGES = {
     # --- worker chạy trong Step Functions ---------------------------------
     "ocr": {
         # Textract đi qua boto3 (runtime cấp sẵn) nên không khai ở đây.
-        "requires": ["google-cloud-documentai>=3.0"],
+        "requires": ["google-cloud-documentai>=3.0", "pydantic>=2.7"],
         "phai_co_module": [
             "workers.ocr",
             "google.cloud.documentai",
@@ -59,9 +59,20 @@ PACKAGES = {
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["workers.reconcile", "pydantic"],
     },
-    # Hai cái này chỉ đổi status trong DynamoDB — không schema, không AI.
-    "mark-failed": {"requires": [], "phai_co_module": ["workers.mark_failed"]},
-    "mark-run-failed": {"requires": [], "phai_co_module": ["workers.mark_failed"]},
+    # Hai cái này chỉ đổi status trong DynamoDB, KHÔNG dùng schema — nhưng vẫn
+    # phải có pydantic: `from common import ...` chạy `common/__init__.py`, file
+    # đó import `ai_clients`, mà `ai_clients` import `schemas` -> pydantic.
+    # Chuỗi này nạp NGAY lúc import, thiếu là chết cold start.
+    # `test_moi_goi_du_thu_vien_nap_ngay_luc_import` suy ra bằng AST, không để
+    # ai khai tay nữa — đó đúng là chỗ bản đầu tiên đã sai.
+    "mark-failed": {
+        "requires": ["pydantic>=2.7"],
+        "phai_co_module": ["workers.mark_failed", "pydantic"],
+    },
+    "mark-run-failed": {
+        "requires": ["pydantic>=2.7"],
+        "phai_co_module": ["workers.mark_failed", "pydantic"],
+    },
     # --- api sau API Gateway ----------------------------------------------
     # Cả bốn đều cần pydantic vì `api/handler.py` import cả bốn miền, mà miền
     # review/process gọi tới `core/` -> `schemas/`. Tách sâu hơn phải bổ
