@@ -7,7 +7,9 @@ Với năm engine, nhãn và đơn giá phải luôn lấy từ cùng một ch�
 
 import pytest
 
-from common import DOCUMENTS_TABLE, new_document_id, new_project_id, put_item, write_object
+from common.dynamodb import DOCUMENTS_TABLE, put_item
+from common.ids import new_document_id, new_project_id
+from common.s3 import write_object
 from common.dynamodb import AUDIT_LOG_TABLE, scan_table
 from common.s3 import upload_key
 
@@ -97,7 +99,7 @@ def test_luu_lai_engine_da_chay_vao_document(tai_lieu, engine_gia, monkeypatch):
 
     Nhãn CÓ vào audit_log, nhưng bảng đó chưa có route API nào đọc.
     """
-    from common import DOCUMENTS_TABLE, get_item
+    from common.dynamodb import DOCUMENTS_TABLE, get_item
     from workers.ocr import lambda_handler
 
     lambda_handler({**tai_lieu, "ocr_engine": "textract"}, None)

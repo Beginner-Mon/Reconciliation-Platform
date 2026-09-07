@@ -1,14 +1,10 @@
 import os
 
-from common import (
-    RateLimitError,
-    log_ai_call,
-    now_ms,
-    ocr_engines,
-    ocr_key,
-    read_object,
-    write_json,
-)
+from common.ai_clients import now_ms
+from common.audit import log_ai_call
+from common.errors import RateLimitError
+from common.s3 import ocr_key, read_object, write_json
+from common import ocr_engines
 
 from .steps import begin_step, finish_step
 

@@ -1,4 +1,4 @@
-from common import create_view_url
+from common.s3 import create_view_url
 
 STEP_SEQUENCE = ["ocr", "extract", "validate"]
 STEPS_PER_DOCUMENT = len(STEP_SEQUENCE)

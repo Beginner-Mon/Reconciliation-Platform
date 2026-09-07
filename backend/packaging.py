@@ -15,9 +15,10 @@ từ 77 MB xuống 9 MB.
 5 role đã tách sẵn từ trước. Gói quyết định code NÀO CÓ MẶT; IAM quyết định code
 đó LÀM ĐƯỢC GÌ.
 
-CODE ỨNG DỤNG THÌ CHÉP HẾT VÀO MỌI GÓI — cả `api/ common/ core/ schemas/
-workers/` cộng lại chỉ 150 KB, tách ra không tiết kiệm được gì mà lại phải bổ
-`common/` thành nhiều mảnh. Chỉ THƯ VIỆN mới chia.
+Mỗi gói khai `modules` — chỉ chép code nó thật sự chạy. Làm được sau khi
+`common/__init__.py` thành RỖNG (trước đó nó re-export mọi thứ nên
+`from common import X` kéo theo cả `schemas/` + pydantic vào mọi Lambda) và sau
+khi `api/` thôi gọi `workers.reconcile` (đối chiếu giờ ở Lambda riêng).
 
 `boto3` KHÔNG có trong gói nào: runtime python3.11 của Lambda đã có sẵn. Nó vẫn
 nằm trong `requirements.txt` vì dev server chạy ở máy thì cần.
@@ -40,7 +41,10 @@ PACKAGES = {
     # --- worker chạy trong Step Functions ---------------------------------
     "ocr": {
         # Textract đi qua boto3 (runtime cấp sẵn) nên không khai ở đây.
-        "requires": ["google-cloud-documentai>=3.0", "pydantic>=2.7"],
+        # KHÔNG cần pydantic: `ai_clients` import `schemas` LƯỜI trong thân hàm
+        # dựng prompt Gemini, mà OCR không gọi hàm đó.
+        "modules": ["common", "workers"],
+        "requires": ["google-cloud-documentai>=3.0"],
         "phai_co_module": [
             "workers.ocr",
             "google.cloud.documentai",
@@ -48,52 +52,62 @@ PACKAGES = {
         ],
     },
     "extract": {
+        "modules": ["common", "core", "schemas", "workers"],
         "requires": ["google-genai>=1.0", "pydantic>=2.7"],
         "phai_co_module": ["workers.extract", "google.genai", "pydantic"],
     },
     "validate": {
+        "modules": ["common", "core", "schemas", "workers"],
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["workers.validate", "pydantic"],
     },
     "reconcile": {
+        "modules": ["common", "core", "schemas", "workers"],
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["workers.reconcile", "pydantic"],
     },
-    # Hai cái này chỉ đổi status trong DynamoDB, KHÔNG dùng schema — nhưng vẫn
-    # phải có pydantic: `from common import ...` chạy `common/__init__.py`, file
-    # đó import `ai_clients`, mà `ai_clients` import `schemas` -> pydantic.
-    # Chuỗi này nạp NGAY lúc import, thiếu là chết cold start.
-    # `test_moi_goi_du_thu_vien_nap_ngay_luc_import` suy ra bằng AST, không để
-    # ai khai tay nữa — đó đúng là chỗ bản đầu tiên đã sai.
+    # Chỉ đổi status trong DynamoDB — không schema, không AI, không thư viện nào
+    # ngoài boto3 mà runtime đã cấp. Gói rỗng ~0,1 MB.
+    #
+    # Từng phải mang pydantic vì `common/__init__.py` re-export mọi thứ, nên
+    # `from common import X` kéo theo cả `schemas/`. Giờ `common/__init__` rỗng
+    # và mỗi module import thẳng submodule.
     "mark-failed": {
-        "requires": ["pydantic>=2.7"],
-        "phai_co_module": ["workers.mark_failed", "pydantic"],
+        "modules": ["common", "workers"],
+        "requires": [],
+        "phai_co_module": ["workers.mark_failed"],
     },
     "mark-run-failed": {
-        "requires": ["pydantic>=2.7"],
-        "phai_co_module": ["workers.mark_failed", "pydantic"],
+        "modules": ["common", "workers"],
+        "requires": [],
+        "phai_co_module": ["workers.mark_failed"],
     },
     # --- api sau API Gateway ----------------------------------------------
     # Cả bốn đều cần pydantic vì `api/handler.py` import cả bốn miền, mà miền
     # review/process gọi tới `core/` -> `schemas/`. Tách sâu hơn phải bổ
     # handler.py ra, đổi lại chỉ tiết kiệm 9 MB cho projects + documents.
     "api-projects": {
+        "modules": ["api", "common", "core", "schemas"],
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["api.handler", "pydantic"],
     },
     "api-documents": {
+        "modules": ["api", "common", "core", "schemas"],
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["api.handler", "pydantic"],
     },
     "api-review": {
+        "modules": ["api", "common", "core", "schemas"],
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["api.handler", "pydantic"],
     },
     "api-process": {
+        "modules": ["api", "common", "core", "schemas"],
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["api.handler", "pydantic"],
     },
 }
 
-# Code ứng dụng chép vào MỌI gói (150 KB, không đáng để chia).
+# Mọi tên module hợp lệ. Mỗi gói khai `modules` là tập con của danh sách này —
+# `tests/test_packaging.py` kiểm, và script build chỉ chép đúng chừng đó.
 APP_MODULES = ["api", "common", "core", "schemas", "workers"]

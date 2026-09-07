@@ -133,12 +133,26 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   bằng gì.
 - **Mỗi Lambda MỘT gói riêng**, bảng gói ở `backend/packaging.py` và
   `tests/test_packaging.py` khoá nó khớp `local.workers` + `local.api_functions`
-  bên `main.tf`. Code ứng dụng (150 KB) chép vào **mọi** gói — tách ra không
-  tiết kiệm gì mà phải bổ `common/` thành nhiều mảnh; chỉ **thư viện** mới chia.
+  bên `main.tf`. Mỗi gói khai `modules` (chép đúng code nó chạy) và `requires`
+  (đúng thư viện nó cần).
   `boto3` KHÔNG vào gói nào (runtime Lambda đã có, 20 MB), nhưng vẫn ở
   `requirements.txt` cho dev server. Đo được: 340 MB → 39,6 MB, `mark-failed`
   0,1 MB, bốn `api-*` 2,5 MB. Cái tiết kiệm là **cold start**, KHÔNG phải phân
   quyền — IAM gắn vào function chứ không gắn vào gói, và 5 role đã tách sẵn.
+- `common/__init__.py` và `workers/__init__.py` phải **RỖNG** — import thẳng
+  submodule (`from common.dynamodb import ...`). `common/__init__` từng
+  re-export cả 7 submodule, nên `from common import X` ở đâu cũng kéo theo
+  `schemas/` → pydantic; đó là lý do `mark-failed` (chỉ đổi một dòng status)
+  từng phải mang pydantic. Đã có test chặn.
+- `common/ai_clients.py` import `schemas` **LƯỜI** trong thân
+  `build_extraction_prompt` — chỉ prompt Gemini cần. Kéo lên mức module là
+  `ocr` và `mark-failed` lại phải mang pydantic.
+- **Đối chiếu chạy ở ĐÚNG MỘT Lambda** (`recon-reconcile`). `/reconcile` và
+  nhánh early-return của `/process` gọi qua `common/reconcile_client.py`
+  (`RequestResponse`, giữ hợp đồng đồng bộ). `PATCH` sửa tay **KHÔNG** đối
+  chiếu — nó là thao tác review; kết quả cũ thành `is_stale`
+  (`views.da_cu()`) và `review_reconciliation` **chặn duyệt/từ chối** cho tới
+  khi chạy lại. Chặn ở SERVER, không chỉ làm mờ nút.
 - `workers/__init__.py` phải **RỖNG**. Nó từng `from .reconcile import
   run_reconciliation`, mà Python chạy `__init__.py` cho mọi lần import
   `workers.xxx` — nghĩa là `workers.ocr` kéo theo `core/` → `schemas/` →

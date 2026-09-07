@@ -6,6 +6,7 @@ cho function đó, và lần deploy sau nó chạy bằng zip cũ — sai theo k
 nhìn thấy. Cùng cách `test_routes.py` khoá bảng route.
 """
 
+import ast
 import pathlib
 import re
 
@@ -112,18 +113,42 @@ def test_worker_khong_keo_ca_goi_workers_vao():
     assert not co_code, f"workers/__init__.py phải rỗng, đang có: {co_code}"
 
 
-def test_code_ung_dung_chep_het_vao_moi_goi():
-    """150 KB — tách ra không tiết kiệm gì mà phải bổ `common/` thành nhiều mảnh."""
+def test_moi_goi_khai_module_hop_le():
     backend = pathlib.Path(__file__).resolve().parents[1]
-
-    assert set(APP_MODULES) == {"api", "common", "core", "schemas", "workers"}
     for ten in APP_MODULES:
         assert (backend / ten / "__init__.py").exists(), ten
 
-    tong = sum(
-        p.stat().st_size for ten in APP_MODULES for p in (backend / ten).rglob("*.py")
-    )
-    assert tong < 1_000_000, f"code ứng dụng đã {tong / 1024:.0f} KB — cân nhắc chia"
+    for goi, spec in PACKAGES.items():
+        assert spec["modules"], goi
+        thua = set(spec["modules"]) - set(APP_MODULES)
+        assert not thua, f"{goi} khai module lạ: {thua}"
+
+
+def test_api_khong_can_workers_va_worker_khong_can_api():
+    """Ranh giới thật giữa hai nhóm Lambda.
+
+    `api/` từng phải kéo `workers/` vì `PATCH` và `/reconcile` tự chạy
+    `run_reconciliation`. Sau khi đối chiếu dời sang Lambda riêng thì không còn
+    — nếu ai đó gọi lại `workers.*` từ `api/`, test này đỏ.
+    """
+    for goi, spec in PACKAGES.items():
+        if goi.startswith("api-"):
+            assert "workers" not in spec["modules"], goi
+        else:
+            assert "api" not in spec["modules"], goi
+
+
+def test_common_init_phai_rong():
+    """Nó từng re-export cả 7 submodule, nên `from common import X` ở đâu cũng
+    kéo theo `schemas/` -> pydantic. Đó là lý do `mark-failed` — chỉ đổi một
+    dòng status — vẫn phải mang pydantic 2,4 MB.
+    """
+    import common
+
+    nguon = pathlib.Path(common.__file__).read_text(encoding="utf-8")
+    cay = ast.parse(nguon)
+    xuat = [n for n in cay.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+    assert not xuat, f"common/__init__.py phải rỗng, đang import: {len(xuat)} dòng"
 
 
 @pytest.mark.parametrize("ten", sorted(PACKAGES))
@@ -138,7 +163,7 @@ def test_ten_goi_dung_dang_dat_ten_file(ten):
 RUNTIME_CO_SAN = {"boto3", "botocore"}
 
 
-def _import_ngay() -> dict[str, str]:
+def _import_ngay(modules: list[str] | None = None) -> dict[str, str]:
     """Thư viện bên thứ ba được import ở MỨC MODULE của code ứng dụng.
 
     Đây là thứ quyết định gói có chạy nổi hay không: thiếu một cái là Lambda
@@ -151,7 +176,6 @@ def _import_ngay() -> dict[str, str]:
     Import LƯỜI (google nằm trong thân hàm ở `ai_clients.py`) không tính ở đây —
     chúng chỉ chết khi hàm đó được gọi, nên vẫn phải khai tay trong `requires`.
     """
-    import ast
     import sys
 
     backend = pathlib.Path(__file__).resolve().parents[1]
@@ -159,7 +183,7 @@ def _import_ngay() -> dict[str, str]:
     app = set(APP_MODULES) | {"packaging"}
 
     thay: dict[str, str] = {}
-    for mod in APP_MODULES:
+    for mod in modules or APP_MODULES:
         for tep in (backend / mod).rglob("*.py"):
             cay = ast.parse(tep.read_text(encoding="utf-8"))
             trong_ham = {
@@ -191,16 +215,32 @@ def test_moi_goi_du_thu_vien_nap_ngay_luc_import():
     Bỏ sót thì Lambda chết ở cold start với ModuleNotFoundError, và chỉ lộ ra
     khi chạy thật trên AWS.
     """
-    can = {ten for ten in _import_ngay() if ten not in RUNTIME_CO_SAN}
-    assert can, "AST không tìm thấy thư viện nào — hàm dò hỏng rồi"
+    assert _import_ngay(), "AST không tìm thấy thư viện nào — hàm dò hỏng rồi"
 
     for goi, spec in PACKAGES.items():
+        # Quét theo ĐÚNG module của gói này, không quét toàn bộ: `ocr` chỉ chép
+        # `common/` + `workers/` nên nó không cần pydantic của `schemas/`.
+        thay = _import_ngay(spec["modules"])
+        can = {ten for ten in thay if ten not in RUNTIME_CO_SAN}
         khai = {yc.split(">")[0].split("=")[0].split("[")[0] for yc in spec["requires"]}
-        thieu = {ten for ten in can if ten not in khai}
+        thieu = sorted(can - khai)
         assert not thieu, (
-            f"gói '{goi}' thiếu {sorted(thieu)} — code ứng dụng nạp nó ngay lúc "
-            f"import (xem {[_import_ngay()[t] for t in sorted(thieu)]})"
+            f"gói '{goi}' thiếu {thieu} — code nó chép vào nạp ngay lúc import "
+            f"(xem {[thay[t] for t in thieu]})"
         )
+
+
+def test_khong_khai_thua_thu_vien_khong_ai_dung():
+    """Chiều ngược lại: khai thừa là gói phình vô cớ, và cold start dài theo."""
+    for goi, spec in PACKAGES.items():
+        khai = {yc.split(">")[0].split("=")[0].split("[")[0] for yc in spec["requires"]}
+        ngay = set(_import_ngay(spec["modules"]))
+        luoi = {"google"}  # google nằm trong thân hàm ở ai_clients.py
+        thua = {
+            t for t in khai
+            if t not in ngay and not any(t.startswith(g) for g in luoi)
+        }
+        assert not thua, f"gói '{goi}' khai thừa {sorted(thua)}"
 
 
 def test_khong_khai_thua_thu_vien_runtime_da_co():

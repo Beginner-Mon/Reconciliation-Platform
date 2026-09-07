@@ -1,10 +1,6 @@
-from common import (
-    RECONCILIATIONS_TABLE,
-    NotFound,
-    get_item,
-    query_documents_by_project,
-    read_json,
-)
+from common.dynamodb import RECONCILIATIONS_TABLE, get_item, query_documents_by_project
+from common.errors import NotFound
+from common.s3 import read_json
 from common.reconcile_client import invoke_reconcile
 
 from .http import json_response

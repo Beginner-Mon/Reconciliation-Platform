@@ -1,4 +1,10 @@
-from common import PROJECTS_TABLE, RUNS_TABLE, now_iso, release_processing_run, update_item
+from common.dynamodb import (
+    PROJECTS_TABLE,
+    RUNS_TABLE,
+    release_processing_run,
+    update_item,
+)
+from common.ids import now_iso
 
 from .steps import fail_step
 

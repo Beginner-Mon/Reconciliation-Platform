@@ -45,7 +45,7 @@ def add_documents(project_id: str, *file_names: str) -> list[dict]:
 
 
 def mark_processed(document_id: str, data: dict) -> None:
-    from common import update_document
+    from common.dynamodb import update_document
 
     update_document(
         document_id,
@@ -199,7 +199,7 @@ def test_them_doc_moi_chi_xu_ly_doc_moi(aws, started_executions):
 
 
 def test_khong_co_ai_call_moi_cho_doc_da_xu_ly(aws, started_executions):
-    from common import AUDIT_LOG_TABLE
+    from common.dynamodb import AUDIT_LOG_TABLE
     from common.dynamodb import scan_table
 
     project_id = make_project()
@@ -223,7 +223,7 @@ def test_khong_co_ai_call_moi_cho_doc_da_xu_ly(aws, started_executions):
 
 
 def test_force_van_bo_qua_doc_da_sua_tay(aws, started_executions):
-    from common import update_document
+    from common.dynamodb import update_document
 
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
@@ -242,7 +242,7 @@ def test_force_van_bo_qua_doc_da_sua_tay(aws, started_executions):
 
 
 def test_force_edited_thi_xu_ly_ca_doc_da_sua_tay(aws, started_executions):
-    from common import update_document
+    from common.dynamodb import update_document
 
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")
@@ -359,7 +359,7 @@ def test_khong_co_endpoint_liet_ke_engine(aws):
 
 
 def audit_records(action: str) -> list[dict]:
-    from common import AUDIT_LOG_TABLE
+    from common.dynamodb import AUDIT_LOG_TABLE
     from common.dynamodb import scan_table
 
     return [item for item in scan_table(AUDIT_LOG_TABLE) if item["action"] == action]
@@ -403,7 +403,7 @@ def test_process_ghi_lai_co_force(aws, started_executions):
 
 def test_force_edited_ghi_vet_ghi_de_cong_review(aws, started_executions):
     """Thao tác phá huỷ duy nhất trong hệ thống phải có dấu vết riêng."""
-    from common import update_document
+    from common.dynamodb import update_document
 
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")
@@ -484,7 +484,7 @@ def _md5(content: bytes) -> str:
 
 def test_upload_trung_bi_bat_o_ca_run_sau(aws, started_executions):
     """content_hash lưu lại nên run sau vẫn nhận ra, không chỉ trong một lần chạy."""
-    from common import update_document
+    from common.dynamodb import update_document
 
     project_id = make_project()
     dau = add_documents(project_id, "INV-001.pdf")
@@ -506,7 +506,7 @@ def test_upload_trung_bi_bat_o_ca_run_sau(aws, started_executions):
 
 def test_chay_lai_chinh_no_khong_bi_coi_la_trung(aws, started_executions):
     """force=true trên cùng document: hash của nó khớp CHÍNH NÓ, không phải trùng."""
-    from common import update_document
+    from common.dynamodb import update_document
 
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")
@@ -626,7 +626,8 @@ def test_khong_con_route_approve_reject_rieng(aws):
 
 
 def test_xem_ocr_tho_cua_document(aws):
-    from common import update_document, write_json
+    from common.dynamodb import update_document
+    from common.s3 import write_json
 
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")

@@ -1,7 +1,7 @@
 import json
 import logging
 
-from common import AppError
+from common.errors import AppError
 
 from . import documents, process, projects, reconcile, review
 from .http import (

@@ -1,20 +1,15 @@
 from pathlib import Path
 
-from common import (
+from common.dynamodb import (
     DOCUMENTS_TABLE,
-    MAX_UPLOAD_BYTES,
-    BadRequest,
-    NotFound,
-    create_upload_post,
     get_item,
-    new_document_id,
-    now_iso,
     put_item,
     query_documents_by_project,
-    read_json,
     update_project,
-    upload_key,
 )
+from common.errors import BadRequest, NotFound
+from common.ids import new_document_id, now_iso
+from common.s3 import MAX_UPLOAD_BYTES, create_upload_post, read_json, upload_key
 
 from .http import json_response
 from .projects import must_get_project

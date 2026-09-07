@@ -1,10 +1,6 @@
-from common import (
-    DOCUMENTS_TABLE,
-    get_item,
-    log_pipeline_step,
-    now_iso,
-    update_document,
-)
+from common.audit import log_pipeline_step
+from common.dynamodb import DOCUMENTS_TABLE, get_item, update_document
+from common.ids import now_iso
 
 STATUS_AFTER_STEP = {
     "ocr": "OCR_DONE",

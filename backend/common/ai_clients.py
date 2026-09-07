@@ -2,7 +2,6 @@ import json
 import os
 import time
 
-from schemas import describe_all_types, supported_types
 
 from .errors import RateLimitError
 
@@ -76,6 +75,11 @@ def _raise_if_rate_limited(exc: Exception) -> None:
 
 
 def build_extraction_prompt(ocr_text: str) -> str:
+    # Import LƯỜI: chỉ prompt Gemini cần `schemas/`, mà `schemas/` kéo theo
+    # pydantic. Để ở mức module thì Lambda `ocr` và `mark-failed` — vốn không
+    # đụng tới schema — vẫn phải mang pydantic trong gói.
+    from schemas import describe_all_types, supported_types
+
     types = supported_types()
     return (
         PROMPT_TEMPLATE.replace("<<DOC_TYPES>>", ", ".join(types))

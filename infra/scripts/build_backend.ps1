@@ -4,8 +4,9 @@
 # backend/tests/test_packaging.py khoá nó khớp với local.workers +
 # local.api_functions bên main.tf.
 #
-# Code ứng dụng (150 KB) chép vào mọi gói; chỉ THƯ VIỆN mới chia. boto3 không
-# vào gói nào vì runtime python3.11 của Lambda đã cấp sẵn.
+# Moi goi chi chep module no THAT SU chay (khoa `modules`) va thu vien no that
+# su can (khoa `requires`). boto3 khong vao goi nao vi runtime python3.11 cua
+# Lambda da cap san.
 #
 # Dựng xong mỗi gói đều được KIỂM: nạp thử `phai_import_duoc` với sys.path chỉ
 # có đúng thư mục vừa dựng. Thiếu thư viện thì hỏng ở đây, không phải lúc chạy
@@ -31,8 +32,8 @@ if (-not (Test-Path $artifacts)) { New-Item -ItemType Directory -Path $artifacts
 $json = & $python -c @"
 import json, sys
 sys.path.insert(0, r'$backend')
-from packaging import APP_MODULES, PACKAGES
-print(json.dumps({'app': APP_MODULES, 'packages': PACKAGES}))
+from packaging import PACKAGES
+print(json.dumps({'packages': PACKAGES}))
 "@
 if ($LASTEXITCODE -ne 0) { throw "khong doc duoc backend/packaging.py" }
 $manifest = $json | ConvertFrom-Json
@@ -75,7 +76,8 @@ foreach ($ten in ($manifest.packages | Get-Member -MemberType NoteProperty | Sel
     $deps = Get-DepsCache $requires
     Get-ChildItem -Path $deps -Force | Copy-Item -Destination $stage -Recurse -Force
 
-    foreach ($mod in $manifest.app) {
+    # CHI chep module goi nay that su chay — khong chep het nhu truoc.
+    foreach ($mod in $spec.modules) {
         Copy-Item (Join-Path $backend $mod) $stage -Recurse -Force
     }
     Get-ChildItem -Path $stage -Recurse -Directory -Filter "__pycache__" |
@@ -110,7 +112,12 @@ if thieu:
 
     $mb = [Math]::Round((Get-Item $zip).Length / 1MB, 1)
     $tong += $mb
-    $ketQua += [PSCustomObject]@{ Lambda = $ten; MB = $mb; Requires = ($requires -join ", ") }
+    $ketQua += [PSCustomObject]@{
+        Lambda   = $ten
+        MB       = $mb
+        Modules  = ($spec.modules -join " ")
+        Requires = ($requires -join ", ")
+    }
 }
 
 $ketQua | Format-Table -AutoSize

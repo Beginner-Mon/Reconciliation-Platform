@@ -1,16 +1,14 @@
-from common import (
+from common.audit import log_review
+from common.dynamodb import (
     DOCUMENTS_TABLE,
     RECONCILIATIONS_TABLE,
-    BadRequest,
-    Conflict,
-    NotFound,
     get_item,
-    log_review,
-    now_iso,
     query_documents_by_project,
     update_document,
     update_item,
 )
+from common.errors import BadRequest, Conflict, NotFound
+from common.ids import now_iso
 from core import validate_document
 
 from .http import json_response

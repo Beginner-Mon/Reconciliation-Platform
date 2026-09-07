@@ -1,14 +1,12 @@
-from common import (
+from common.ai_clients import (
     GEMINI_MODEL,
-    RateLimitError,
     estimate_gemini_cost,
     extract_with_gemini,
-    extraction_key,
-    log_ai_call,
     now_ms,
-    read_json,
-    write_json,
 )
+from common.audit import log_ai_call
+from common.errors import RateLimitError
+from common.s3 import extraction_key, read_json, write_json
 
 from core import check_grounding
 
