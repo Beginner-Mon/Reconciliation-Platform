@@ -1,6 +1,5 @@
 import type {
   Extraction,
-  OcrEngineList,
   OcrResult,
   ProcessOptions,
   ProcessResult,
@@ -51,10 +50,6 @@ export const api = {
       files: fileNames.map((file_name) => ({ file_name })),
     }),
 
-  /** Engine OCR, giá và cảnh báo tiếng Việt — nguồn duy nhất là registry ở
-   *  backend, không khai lại bên này. */
-  listOcrEngines: () => request<OcrEngineList>("GET", "/ocr-engines"),
-
   /** Bỏ trống `document_ids` là chạy cả project; truyền vào là chạy đúng chừng
    *  đó chứng từ. `force` bỏ qua cache (chứng từ đã VALIDATED). */
   process: (id: string, options: ProcessOptions = {}) =>
@@ -76,13 +71,11 @@ export const api = {
       { fields, reviewer: "poc-user" },
     ),
 
-  approve: (reconciliationId: string) =>
-    request<Reconciliation>("POST", `/reconciliations/${reconciliationId}/approve`, {
-      reviewer: "poc-user",
-    }),
-
-  reject: (reconciliationId: string) =>
-    request<Reconciliation>("POST", `/reconciliations/${reconciliationId}/reject`, {
+  /** Một route cho cả duyệt lẫn từ chối — hai bên ghi cùng một bảng, cùng một
+   *  shape, khác đúng giá trị `decision`. */
+  review: (reconciliationId: string, decision: "APPROVED" | "REJECTED") =>
+    request<Reconciliation>("POST", `/reconciliations/${reconciliationId}/review`, {
+      decision,
       reviewer: "poc-user",
     }),
 };

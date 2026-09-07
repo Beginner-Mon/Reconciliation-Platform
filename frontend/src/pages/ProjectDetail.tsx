@@ -8,9 +8,9 @@ import { DocumentViewer } from "../components/DocumentViewer";
 import { EditPanel } from "../components/EditPanel";
 import { ExtractionPanel } from "../components/ExtractionPanel";
 import { WorkflowView } from "../components/WorkflowView";
-import { SEVERITY_ORDER } from "../format";
+import { DEFAULT_OCR_ENGINE, OCR_ENGINES, SEVERITY_ORDER } from "../format";
 import { useProject } from "../hooks/useProject";
-import type { Discrepancy, DocumentView, OcrEngineChoice } from "../types";
+import type { Discrepancy, DocumentView } from "../types";
 
 type TabKey = "document" | "extract" | "flags" | "edit";
 
@@ -26,8 +26,6 @@ export function ProjectDetail() {
   const [discrepancies, setDiscrepancies] = useState<Discrepancy[]>([]);
   /** Khung phải chuyển sang màn hình tiến trình khi bấm Xử lý, ở đó tới khi xong. */
   const [showWorkflow, setShowWorkflow] = useState(false);
-  const [engines, setEngines] = useState<OcrEngineChoice[]>([]);
-  const [defaultEngine, setDefaultEngine] = useState<string | null>(null);
 
   const active = data?.run?.is_active ?? false;
   const reconciliation = data?.latest_reconciliation ?? null;
@@ -37,23 +35,6 @@ export function ProjectDetail() {
     () => data?.documents.find((d) => d.document_id === selectedId) ?? null,
     [data, selectedId],
   );
-
-  // Nhãn, giá và cảnh báo tiếng Việt của engine lấy TỪ BACKEND, không khai lại
-  // bên này — hai bản sao rồi sẽ lệch nhau. Cấu hình tĩnh nên lấy một lần.
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listOcrEngines()
-      .then((list) => {
-        if (cancelled) return;
-        setEngines(list.engines);
-        setDefaultEngine(list.default);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Chọn sẵn file đầu tiên cho đỡ phải bấm.
   useEffect(() => {
@@ -216,8 +197,8 @@ export function ProjectDetail() {
           selectedId={selectedId}
           running={active}
           busy={busy}
-          engines={engines}
-          defaultEngine={defaultEngine}
+          engines={OCR_ENGINES}
+          defaultEngine={DEFAULT_OCR_ENGINE}
           onSelect={(document) => {
             setSelectedId(document.document_id);
             if (showWorkflow && !active) setShowWorkflow(false);
@@ -347,7 +328,7 @@ export function ProjectDetail() {
                                   reconciliationId &&
                                   run(
                                     async () => {
-                                      await api.reject(reconciliationId);
+                                      await api.review(reconciliationId, "REJECTED");
                                       await refresh();
                                     },
                                     () => "Đã từ chối kết quả đối soát.",
@@ -363,7 +344,7 @@ export function ProjectDetail() {
                                   reconciliationId &&
                                   run(
                                     async () => {
-                                      await api.approve(reconciliationId);
+                                      await api.review(reconciliationId, "APPROVED");
                                       await refresh();
                                     },
                                     () => "Đã duyệt kết quả đối soát.",

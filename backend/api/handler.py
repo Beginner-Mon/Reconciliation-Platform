@@ -34,9 +34,6 @@ PROJECT_ROUTES = [
     ("POST", "/projects", projects.create_project),
     ("GET", "/projects", projects.list_projects),
     ("GET", "/projects/{project_id}", projects.get_project),
-    # Cấu hình đọc-thuần, không thuộc project nào — nằm ở miền projects vì nó
-    # chỉ đọc registry trong bộ nhớ, không cần thêm quyền IAM nào.
-    ("GET", "/ocr-engines", projects.list_ocr_engines),
 ]
 
 DOCUMENT_ROUTES = [
@@ -52,8 +49,7 @@ REVIEW_ROUTES = [
     ("POST", "/projects/{project_id}/reconcile", reconcile.reconcile_project),
     ("PATCH", "/projects/{project_id}/documents/{document_id}", review.edit_document),
     ("GET", "/reconciliations/{reconciliation_id}", reconcile.get_reconciliation),
-    ("POST", "/reconciliations/{reconciliation_id}/approve", review.approve_reconciliation),
-    ("POST", "/reconciliations/{reconciliation_id}/reject", review.reject_reconciliation),
+    ("POST", "/reconciliations/{reconciliation_id}/review", review.review_reconciliation),
 ]
 
 # Route DUY NHẤT gọi Step Functions trong toàn hệ thống.

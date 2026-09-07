@@ -149,24 +149,6 @@ def resolve_for_app(name: str) -> dict:
     return resolve(name)
 
 
-def app_choices() -> list[dict]:
-    """Danh sách engine cho giao diện — nhãn, giá và cảnh báo tiếng Việt.
-
-    Giao diện lấy TỪ ĐÂY thay vì khai lại bên TypeScript: hai bản sao rồi sẽ
-    lệch nhau, và đó đúng là cách giá bị lệch 20 lần lần trước.
-    """
-    return [
-        {
-            "name": name,
-            "note": ENGINES[name]["note"],
-            "cloud": ENGINES[name]["cloud"],
-            "usd_per_page": usd_per_page(name),
-            "supports_vietnamese": ENGINES[name]["supports_vietnamese"],
-        }
-        for name in APP_ENGINES
-    ]
-
-
 def usd_per_page(name: str) -> float:
     """Đơn giá đọc từ biến môi trường — giá đổi thì không phải sửa code."""
     spec = resolve(name)

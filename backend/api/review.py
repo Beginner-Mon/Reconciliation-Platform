@@ -97,35 +97,45 @@ def edit_document(params: dict, body: dict) -> dict:
     )
 
 
-def _decide(reconciliation_id: str, decision: str, body: dict) -> dict:
+# Duyệt và từ chối ghi CÙNG một bảng, CÙNG một shape, khác đúng một enum —
+# không có side effect nào riêng nên một route là đủ. Tách làm hai cũng không
+# thêm gì cho audit: `log_review` đã ghi `decision` vào `audit_log`.
+#
+# Tách lại chỉ hợp lý khi duyệt sinh ra hệ quả mà từ chối không có (đẩy sang
+# ERP, gửi thông báo) — lúc đó side effect mới thật sự khác nhau.
+DECISIONS = ("APPROVED", "REJECTED")
+
+
+def review_reconciliation(params: dict, body: dict) -> dict:
+    reconciliation_id = params["reconciliation_id"]
+
+    # Gộp route thì `decision` thành dữ liệu đầu vào, phải kiểm. Coi mọi thứ
+    # khác APPROVED là từ chối thì một lỗi gõ phím sẽ âm thầm từ chối cả đợt
+    # đối chiếu — và bản ghi audit trông y như người ta cố ý làm vậy.
+    decision = body.get("decision")
+    if decision not in DECISIONS:
+        raise BadRequest(
+            f"decision phải là một trong: {', '.join(DECISIONS)} (nhận {decision!r})"
+        )
+
     record = must_get_reconciliation(reconciliation_id)
     if record.get("status") != "PENDING_REVIEW":
         raise Conflict(f"Reconciliation đang ở trạng thái {record.get('status')}")
 
-    reviewer = body.get("reviewer") or "poc-user"
     review = {
         "decision": decision,
-        "reviewer": reviewer,
+        "reviewer": body.get("reviewer") or "poc-user",
         "reviewed_at": now_iso(),
         "comment": body.get("comment"),
     }
-    status = "APPROVED" if decision == "APPROVED" else "REJECTED"
     update_item(
         RECONCILIATIONS_TABLE,
         {"reconciliation_id": reconciliation_id},
-        {"status": status, "review": review},
+        {"status": decision, "review": review},
     )
     log_review(
         record["project_id"],
         "REVIEW_DECISION",
         {"reconciliation_id": reconciliation_id, **review},
     )
-    return json_response({**record, "status": status, "review": review})
-
-
-def approve_reconciliation(params: dict, body: dict) -> dict:
-    return _decide(params["reconciliation_id"], "APPROVED", body)
-
-
-def reject_reconciliation(params: dict, body: dict) -> dict:
-    return _decide(params["reconciliation_id"], "REJECTED", body)
+    return json_response({**record, "status": decision, "review": review})

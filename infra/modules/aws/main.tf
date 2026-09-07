@@ -513,15 +513,13 @@ locals {
     "POST /projects"                                         = "projects"
     "GET /projects"                                          = "projects"
     "GET /projects/{project_id}"                             = "projects"
-    "GET /ocr-engines"                                       = "projects"
     "POST /projects/{project_id}/documents"                  = "documents"
     "GET /projects/{project_id}/documents"                   = "documents"
     "GET /projects/{project_id}/documents/{document_id}/ocr" = "documents"
     "POST /projects/{project_id}/reconcile"                  = "review"
     "PATCH /projects/{project_id}/documents/{document_id}"   = "review"
     "GET /reconciliations/{reconciliation_id}"               = "review"
-    "POST /reconciliations/{reconciliation_id}/approve"      = "review"
-    "POST /reconciliations/{reconciliation_id}/reject"       = "review"
+    "POST /reconciliations/{reconciliation_id}/review"       = "review"
     "POST /projects/{project_id}/process"                    = "process"
   }
 }

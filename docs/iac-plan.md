@@ -103,8 +103,7 @@ documents   POST   /projects/{project_id}/documents
 review      POST   /projects/{project_id}/reconcile
             PATCH  /projects/{project_id}/documents/{document_id}
             GET    /reconciliations/{reconciliation_id}
-            POST   /reconciliations/{reconciliation_id}/approve
-            POST   /reconciliations/{reconciliation_id}/reject
+            POST   /reconciliations/{reconciliation_id}/review
 
 process     POST   /projects/{project_id}/process
 ```

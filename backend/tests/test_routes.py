@@ -202,3 +202,58 @@ def test_moi_engine_app_cho_chon_deu_co_du_env_tren_lambda():
         f"engine app cho chọn nhưng Lambda thiếu biến môi trường: {thieu}. "
         f"Thêm vào `local.lambda_env` trong infra/modules/aws/main.tf."
     )
+
+
+# --- Danh sách engine khai cứng bên frontend phải khớp APP_ENGINES ----------
+
+FORMAT_TS = (
+    pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src" / "format.ts"
+)
+
+
+def test_frontend_khai_dung_bo_engine_ma_server_chap_nhan():
+    """Bỏ `GET /ocr-engines` thì hai bên không còn tự đồng bộ nữa.
+
+    Hai hằng số tĩnh không đáng một endpoint, nhưng đổi lại phải có test này:
+    frontend khai cứng tên engine, server chỉ nhận đúng `APP_ENGINES`. Lệch một
+    tên là menu hiện một lựa chọn mà bấm vào chắc chắn 400.
+
+    Chỉ khoá TÊN. Nhãn hiển thị bên TS được phép khác `note` trong registry —
+    một bên viết cho người đọc, một bên là mô tả kỹ thuật.
+    """
+    from common import ocr_engines
+
+    nguon = FORMAT_TS.read_text(encoding="utf-8")
+    khoi = _hcl_block_ts(nguon, "OCR_ENGINES")
+    ten_frontend = re.findall(r'name:\s*"([^"]+)"', khoi)
+
+    assert ten_frontend == list(ocr_engines.APP_ENGINES), (
+        f"frontend khai {ten_frontend}, server nhận {list(ocr_engines.APP_ENGINES)}"
+    )
+
+
+def test_frontend_canh_bao_dung_engine_khong_ho_tro_tieng_viet():
+    """Cảnh báo sai chỗ còn tệ hơn không có: người dùng chọn nhầm engine mất dấu
+    cho chứng từ tiếng Việt mà tưởng là an toàn."""
+    from common import ocr_engines
+
+    khoi = _hcl_block_ts(FORMAT_TS.read_text(encoding="utf-8"), "OCR_ENGINES")
+    cap = re.findall(r'name:\s*"([^"]+)"[\s\S]*?supportsVietnamese:\s*(true|false)', khoi)
+
+    for ten, co in cap:
+        assert (co == "true") is ocr_engines.ENGINES[ten]["supports_vietnamese"], ten
+
+
+def _hcl_block_ts(text: str, name: str) -> str:
+    """Cắt thân của `export const <name> ... = [ ... ]` trong TypeScript."""
+    start = text.index(f"const {name}")
+    mo = text.index("[", start)
+    depth = 0
+    for index in range(mo, len(text)):
+        if text[index] == "[":
+            depth += 1
+        elif text[index] == "]":
+            depth -= 1
+            if depth == 0:
+                return text[mo : index + 1]
+    raise AssertionError(f"Không tìm thấy mảng `{name}` trong format.ts")

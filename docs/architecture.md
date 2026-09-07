@@ -43,7 +43,7 @@ không chạy lại các file cũ. Đây là yêu cầu nghiệp vụ, không ph
 [4] Human Review (API độc lập, KHÔNG nằm trong Step Functions)
        GET   /projects/{id}                              poll 2s
        PATCH /projects/{id}/documents/{doc_id}           sửa tay -> tự đối chiếu lại
-       POST  /reconciliations/{id}/approve | /reject
+       POST  /reconciliations/{id}/review                 {"decision": APPROVED|REJECTED}
 ```
 
 ### 3.1 Row DynamoDB sinh ra TRƯỚC khi file lên S3

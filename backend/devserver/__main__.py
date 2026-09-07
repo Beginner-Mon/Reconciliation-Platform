@@ -88,8 +88,8 @@ ROUTES_NOTE = """
   POST   /projects/{id}/reconcile                   đối chiếu lại
   PATCH  /projects/{id}/documents/{doc_id}          sửa tay + đối chiếu lại
   GET    /reconciliations/{id}                      kết quả đối chiếu đầy đủ
-  POST   /reconciliations/{id}/approve              duyệt
-  POST   /reconciliations/{id}/reject               từ chối
+  POST   /reconciliations/{id}/review                duyệt / từ chối
+                                                    body {"decision":"APPROVED"|"REJECTED"}
 """
 
 

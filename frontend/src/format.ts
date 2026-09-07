@@ -79,3 +79,29 @@ export function statusLabel(status: DocumentStatus, step?: Step | null): string 
 
 /** Ngưỡng dưới mức này thì tô cảnh báo — đo được từ spike: 0,38-0,44 đúng là chỗ đọc sai. */
 export const LOW_CONFIDENCE = 0.75;
+
+/** Engine OCR chọn được. Khai cứng vì chỉ có hai và chúng chỉ đổi khi deploy —
+ *  một endpoint riêng chỉ để trả về hai hằng số là xây quá tay.
+ *
+ *  Đổi lại, danh sách này KHÔNG tự đồng bộ với server nữa, nên
+ *  `backend/tests/test_routes.py` đọc chính mảng dưới đây và khoá nó khớp với
+ *  `APP_ENGINES`. Thêm/đổi tên engine mà quên chỗ này thì test đỏ.
+ *
+ *  Không hiện đơn giá ở đây: giá nằm trong registry của server và cũng là giá
+ *  ghi vào audit_log. Chép sang đây thì lệch một lần là giao diện nói dối.
+ */
+export const OCR_ENGINES = [
+  {
+    name: "textract",
+    label: "Amazon Textract",
+    supportsVietnamese: false,
+  },
+  {
+    name: "dococr",
+    label: "Google Document AI",
+    supportsVietnamese: true,
+  },
+] as const;
+
+/** Mặc định của nút "Xử lý" — phải khớp DEFAULT_ENGINE bên server. */
+export const DEFAULT_OCR_ENGINE = "textract";

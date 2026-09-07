@@ -302,17 +302,32 @@ def test_khong_khai_engine_thi_dung_mac_dinh(aws, started_executions):
 
 
 def test_engine_ngoai_danh_sach_app_tra_400(aws, started_executions):
-    """`formparser` vẫn còn trong bảng cho evaluation, nhưng app không cho chọn."""
+    """Server là chốt chặn DUY NHẤT cho tên engine.
+
+    Giao diện khai cứng hai tên, nhưng `/process` là API công khai — không thể
+    tin vào phía gọi. Kiểm ở đây phải bắt cả ba loại:
+
+      formparser   có thật trong bảng, nhưng app không cho chọn
+      textrackt    gõ sai
+      rác          giá trị bịa
+
+    Im lặng rơi về engine mặc định là kiểu hỏng tệ nhất: chạy trót lọt, tính
+    tiền theo engine này, ghi audit theo engine kia.
+    """
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")
     put_file(created[0]["s3_key"])
 
-    status, body = call(
-        "POST", f"/projects/{project_id}/process", {"engine": "formparser"}
-    )
+    for ten in ("formparser", "layout", "textract-analyze", "textrackt", "DOCOCR", "1"):
+        status, body = call(
+            "POST", f"/projects/{project_id}/process", {"engine": ten}
+        )
 
-    assert status == 400
-    assert "formparser" in body["error"]
+        assert status == 400, f"engine {ten!r} phải bị từ chối"
+        assert ten in body["error"]
+        # Danh sách hợp lệ phải nằm trong thông báo, nếu không người gọi mù.
+        assert "textract, dococr" in body["error"]
+
     assert started_executions == []
 
 
@@ -327,17 +342,13 @@ def test_engine_duoc_ghi_vao_audit(aws, started_executions):
     assert audit_records("PROCESS_RUN")[0]["detail"]["ocr_engine"] == "dococr"
 
 
-def test_route_ocr_engines_liet_ke_dung_hai_lua_chon(aws):
-    """Giao diện lấy nhãn/giá/cảnh báo từ đây thay vì khai lại bên TypeScript."""
-    from common import ocr_engines
+def test_khong_co_endpoint_liet_ke_engine(aws):
+    """Hai hằng số tĩnh không đáng một endpoint. Giao diện khai cứng hai tên;
+    `test_routes.py` khoá chúng khớp với `APP_ENGINES`.
 
-    status, body = call("GET", "/ocr-engines")
-
-    assert status == 200
-    assert body["default"] == ocr_engines.DEFAULT_ENGINE
-    assert [e["name"] for e in body["engines"]] == list(ocr_engines.APP_ENGINES)
-    theo_ten = {e["name"]: e for e in body["engines"]}
-    assert theo_ten["textract"]["supports_vietnamese"] is False
+    Bỏ endpoint KHÔNG được làm yếu kiểm tra phía server — xem test dưới.
+    """
+    assert call("GET", "/ocr-engines")[0] == 404
 
 
 # --- Audit cho quyết định idempotent ---------------------------------------
@@ -544,21 +555,63 @@ def test_sua_tay_thi_doi_chieu_chay_lai_ngay(aws):
     assert body["reconciliation"]["discrepancy_count"] == 0
 
 
-def test_approve_reconciliation(aws):
+def _reconciliation_id(project_id: str) -> str:
+    return call("POST", f"/projects/{project_id}/reconcile")[1]["reconciliation_id"]
+
+
+def _project_da_doi_chieu() -> str:
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
     mark_processed(created[0]["document_id"], PO_DATA)
     mark_processed(created[1]["document_id"], INVOICE_DATA)
-    _, recon = call("POST", f"/projects/{project_id}/reconcile")
+    return project_id
 
-    status, body = call(
-        "POST", f"/reconciliations/{recon['reconciliation_id']}/approve", {"reviewer": "tri"}
-    )
-    assert status == 200
-    assert body["status"] == "APPROVED"
 
-    status, body = call("POST", f"/reconciliations/{recon['reconciliation_id']}/approve")
-    assert status == 409
+def test_duyet_va_tu_choi_dung_CHUNG_mot_endpoint(aws):
+    """Duyệt và từ chối ghi cùng một bảng, cùng một shape, khác đúng một enum —
+    không có side effect nào riêng nên không đáng tách làm hai route.
+
+    Vết audit không mất gì: `log_review` đã ghi `decision` vào `audit_log`.
+    """
+    for quyet_dinh in ("APPROVED", "REJECTED"):
+        reconciliation_id = _reconciliation_id(_project_da_doi_chieu())
+
+        status, body = call(
+            "POST",
+            f"/reconciliations/{reconciliation_id}/review",
+            {"decision": quyet_dinh, "reviewer": "tri"},
+        )
+
+        assert status == 200
+        assert body["status"] == quyet_dinh
+        assert body["review"]["decision"] == quyet_dinh
+        assert body["review"]["reviewer"] == "tri"
+
+
+def test_review_lan_hai_tra_409(aws):
+    reconciliation_id = _reconciliation_id(_project_da_doi_chieu())
+    body = {"decision": "APPROVED"}
+
+    assert call("POST", f"/reconciliations/{reconciliation_id}/review", body)[0] == 200
+    assert call("POST", f"/reconciliations/{reconciliation_id}/review", body)[0] == 409
+
+
+def test_quyet_dinh_chi_nhan_APPROVED_hoac_REJECTED(aws):
+    """Gộp route thì `decision` thành dữ liệu đầu vào — phải kiểm, không được
+    im lặng coi mọi thứ khác APPROVED là từ chối."""
+    reconciliation_id = _reconciliation_id(_project_da_doi_chieu())
+
+    for xau in ({}, {"decision": ""}, {"decision": "approved"}, {"decision": "MAYBE"}):
+        status, body = call("POST", f"/reconciliations/{reconciliation_id}/review", xau)
+        assert status == 400, f"{xau} phải bị từ chối"
+        assert "decision" in body["error"]
+
+
+def test_khong_con_route_approve_reject_rieng(aws):
+    reconciliation_id = _reconciliation_id(_project_da_doi_chieu())
+
+    for duoi in ("approve", "reject"):
+        assert call("POST", f"/reconciliations/{reconciliation_id}/{duoi}")[0] == 404
 
 
 def test_xem_ocr_tho_cua_document(aws):

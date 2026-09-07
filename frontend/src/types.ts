@@ -180,23 +180,11 @@ export interface ProcessResult {
   message?: string;
 }
 
-/** Một engine OCR mà giao diện được phép chọn.
- *
- *  Nhãn, giá và cảnh báo tiếng Việt lấy từ `GET /ocr-engines` chứ KHÔNG khai
- *  lại ở đây: hai bản sao rồi sẽ lệch nhau, và đó đúng là cách ước tính chi phí
- *  từng lệch 20 lần.
- */
+/** Một engine OCR chọn được. Danh sách nằm ở `format.ts OCR_ENGINES`. */
 export interface OcrEngineChoice {
   name: string;
-  note: string;
-  cloud: "google" | "aws";
-  usd_per_page: number;
-  supports_vietnamese: boolean;
-}
-
-export interface OcrEngineList {
-  default: string;
-  engines: OcrEngineChoice[];
+  label: string;
+  supportsVietnamese: boolean;
 }
 
 export interface ProcessOptions {

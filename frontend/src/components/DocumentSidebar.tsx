@@ -35,8 +35,8 @@ interface Props {
   selectedId: string | null;
   running: boolean;
   busy: boolean;
-  engines: OcrEngineChoice[];
-  defaultEngine: string | null;
+  engines: readonly OcrEngineChoice[];
+  defaultEngine: string;
   onSelect: (document: DocumentView) => void;
   onUpload: (files: FileList) => void;
   onProcess: () => void;
@@ -192,12 +192,12 @@ export function DocumentSidebar({
                           )}
                         </span>
                         <span className="mt-0.5 block text-xs text-slate-500">
-                          {engine.note} · ${engine.usd_per_page}/trang
+                          {engine.label}
                         </span>
                         {/* Cảnh báo đặt NGAY chỗ chọn, không chôn trong tài
                             liệu: đo trên hoá đơn thật thì Textract mất gần hết
                             dấu tiếng Việt, dù số vẫn đọc đúng. */}
-                        {!engine.supports_vietnamese && (
+                        {!engine.supportsVietnamese && (
                           <span className="mt-1 flex items-center gap-1 text-xs text-amber-700">
                             <AlertTriangle size={11} /> không hỗ trợ tiếng Việt
                           </span>

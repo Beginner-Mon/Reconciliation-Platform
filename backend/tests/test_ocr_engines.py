@@ -112,23 +112,18 @@ def test_engine_ngoai_danh_sach_app_bi_tu_choi():
         assert name in thong_bao
 
 
-def test_app_choices_mang_du_thu_giao_dien_can():
-    """Giao diện lấy nhãn, giá và cảnh báo tiếng Việt TỪ ĐÂY.
+def test_moi_engine_khai_ro_co_ho_tro_tieng_viet_hay_khong():
+    """Cờ này lái hai cảnh báo: dòng LƯU Ý lúc devserver khởi động, và nhãn đỏ
+    trong menu "Chạy lại với…" (frontend khai cứng, `test_routes.py` khoá lại).
 
-    Khai lại mấy thứ này bên TypeScript là mở đúng cái cửa đã làm lệch giá 20
-    lần: hai bản sao rồi sẽ lệch nhau.
+    Cảnh báo sai chỗ còn tệ hơn không có: người dùng chọn nhầm engine mất dấu
+    cho chứng từ tiếng Việt mà tưởng là an toàn.
     """
-    choices = ocr_engines.app_choices()
-
-    assert [c["name"] for c in choices] == list(ocr_engines.APP_ENGINES)
-    for choice in choices:
-        assert choice["note"]
-        assert choice["usd_per_page"] > 0
-        assert isinstance(choice["supports_vietnamese"], bool)
-
-    theo_ten = {c["name"]: c for c in choices}
-    assert theo_ten["textract"]["supports_vietnamese"] is False
-    assert theo_ten["dococr"]["supports_vietnamese"] is True
+    for name, spec in ocr_engines.ENGINES.items():
+        assert isinstance(spec["supports_vietnamese"], bool), name
+        # Google Document AI đọc được tiếng Việt; AWS Textract thì không —
+        # tài liệu AWS chỉ liệt kê 6 thứ tiếng, không có tiếng Việt.
+        assert spec["supports_vietnamese"] is (spec["cloud"] == "google"), name
 
 
 # --- Kiểm credential trước khi chạy ---------------------------------------

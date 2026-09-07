@@ -118,7 +118,7 @@ POST {api_url}/projects/{id}/reconcile
 # 6. Human Review
 GET   {api_url}/reconciliations/{reconciliation_id}
 PATCH {api_url}/projects/{id}/documents/{document_id}   {"fields":{"vendor":"ABC Technology"}}
-POST  {api_url}/reconciliations/{reconciliation_id}/approve
+POST  {api_url}/reconciliations/{reconciliation_id}/review   {"decision":"APPROVED"}
 ```
 
 Thêm document vào project đã xử lý: lặp lại bước 2 → 3. Bước 3 **chỉ OCR file
