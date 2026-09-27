@@ -230,25 +230,26 @@ Functions/API. Xem `docs/schemas.md` cho danh sách rule.
 
 | Thành phần | Công nghệ | Ghi chú |
 |---|---|---|
-| Frontend | React (Vite) + S3/CloudFront | Chưa làm |
-| API | API Gateway HTTP + **4 Lambda** | chia theo miền: projects · documents · review · process. POC: **chưa có auth** (giới hạn cố ý) |
+| Frontend | React (Vite) + **Amplify Hosting** (deploy thủ công bằng zip) | Đã làm |
+| API | API Gateway HTTP + **4 Lambda** + **Cognito JWT authorizer** | chia theo miền: projects · documents · review · process. **Có auth** (chỉ frontend chạy ở máy với `VITE_API_URL` localhost và thiếu `VITE_COGNITO_*` mới bỏ qua đăng nhập) |
 | Orchestration | Step Functions STANDARD | Map + retry + catch per-document |
 | Worker | 6 Lambda | ocr, extract, validate, reconcile, mark-failed, mark-run-failed |
 | Storage | S3 | gom hết dưới `projects/{project_id}/` |
-| Database | DynamoDB | 5 bảng, xem `data-model.md` |
+| Database | DynamoDB | 4 bảng, xem `data-model.md` |
 | AI | Document AI Form Parser + Gemini | Google Cloud |
 | IaC | Terraform | AWS + GCP providers |
-| Logging | CloudWatch | Grafana cân nhắc sau |
+| Logging | CloudWatch | audit + monitoring: xem `observability.md` |
 
 ## 10. Lưu vết AI call (rule cứng)
 
-Mỗi lần gọi Document AI/Gemini → 1 record `AI_CALL` trong `audit_log`:
+Mỗi lần gọi Document AI/Gemini → 1 dòng `AI_CALL` trong CloudWatch Logs:
 request_id, entity_id, model, thời gian, latency, status, token usage,
 estimated cost. Ghi cả khi lỗi và khi bị rate limit.
 
 ## 11. Giới hạn cố ý của POC
 
-- Không auth (Cognito ở giai đoạn sau) → **chưa dùng WebSocket** cũng vì lý do này.
-- Chưa có Grafana/Loki — dùng CloudWatch trước.
+- **Có auth** (Cognito User Pool + JWT authorizer ở API Gateway). Chỉ frontend chạy ở máy với devserver (`VITE_API_URL` localhost) và thiếu `VITE_COGNITO_*` mới bỏ qua đăng nhập; `env=dev` trên AWS vẫn yêu cầu JWT. Production bắt đăng nhập và bắt đổi mật khẩu lần đầu (`allow_admin_create_user_only=true`).
+- Chưa có Grafana/Loki — dùng CloudWatch trước. Audit là dòng JSON trên stdout,
+  xem bằng Logs Insights trên dashboard; chi tiết ở `observability.md`.
 - `GET /projects` dùng `scan` bảng projects (số project nhỏ); mọi truy vấn
   document đều qua GSI, **không scan**.

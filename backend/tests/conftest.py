@@ -7,7 +7,6 @@ os.environ["PROJECTS_TABLE"] = "test-projects"
 os.environ["DOCUMENTS_TABLE"] = "test-documents"
 os.environ["RUNS_TABLE"] = "test-runs"
 os.environ["RECONCILIATIONS_TABLE"] = "test-reconciliations"
-os.environ["AUDIT_LOG_TABLE"] = "test-audit-log"
 os.environ["DOCUMENTS_BUCKET"] = "test-documents-bucket"
 os.environ["STATE_MACHINE_ARN"] = (
     "arn:aws:states:ap-southeast-1:123456789012:stateMachine:test-sm"
@@ -75,7 +74,7 @@ def doi_chieu_tai_cho(monkeypatch):
     """
     from workers.reconcile import run_reconciliation
 
-    for ten in ("api.reconcile", "api.process"):
+    for ten in ("api.reconcile", "api.process", "api.documents"):
         module = __import__(ten, fromlist=["invoke_reconcile"])
         if hasattr(module, "invoke_reconcile"):
             monkeypatch.setattr(module, "invoke_reconcile", run_reconciliation)

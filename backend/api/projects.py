@@ -8,6 +8,7 @@ from common.dynamodb import (
 )
 from common.errors import BadRequest, NotFound
 from common.ids import new_project_id, now_iso
+from common.audit import log_project_created
 from common.dynamodb import scan_table
 
 from .http import json_response
@@ -21,7 +22,7 @@ def must_get_project(project_id: str) -> dict:
     return project
 
 
-def create_project(params: dict, body: dict) -> dict:
+def create_project(params: dict, body: dict, user: str) -> dict:
     name = (body.get("name") or "").strip()
     if not name:
         raise BadRequest("Thiếu name")
@@ -32,20 +33,23 @@ def create_project(params: dict, body: dict) -> dict:
         "name": name,
         "description": body.get("description") or "",
         "created_at": now_iso(),
-        "created_by": body.get("created_by") or "poc-user",
+        "created_by": user,
         "document_count": 0,
     }
     put_item(PROJECTS_TABLE, project)
+    log_project_created(
+        project_id, {"name": name}, actor=user, source="api",
+    )
     return json_response(project, 201)
 
 
-def list_projects(params: dict, body: dict) -> dict:
+def list_projects(params: dict, body: dict, user: str) -> dict:
     projects = scan_table(PROJECTS_TABLE)
     projects.sort(key=lambda p: p.get("created_at") or "", reverse=True)
     return json_response({"items": projects})
 
 
-def get_project(params: dict, body: dict) -> dict:
+def get_project(params: dict, body: dict, user: str) -> dict:
     project_id = params["project_id"]
     project = must_get_project(project_id)
     documents = query_documents_by_project(project_id)
@@ -71,6 +75,6 @@ def get_project(params: dict, body: dict) -> dict:
             "run": run,
             "progress": progress_view(documents),
             "documents": [document_view(d, with_url=True) for d in documents],
-            "latest_reconciliation": reconciliation_view(reconciliation, documents),
+            "latest_reconciliation": reconciliation_view(reconciliation, documents, project),
         }
     )

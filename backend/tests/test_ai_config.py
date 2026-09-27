@@ -82,6 +82,21 @@ def test_prompt_co_chen_noi_dung_ocr():
     assert "<<OCR_TEXT>>" not in prompt
 
 
+def test_prompt_giu_truong_ngoai_bang_va_khong_tu_tinh():
+    prompt = build_extraction_prompt("Shipping 50\nPhụ phí bất kỳ 20")
+    assert "TOÀN BỘ nhãn–giá trị ngoài bảng" in prompt
+    assert "Không tự tính bù, sửa số" in prompt
+    assert "Số lượng, đơn giá, thành tiền phải khớp khi đủ dữ liệu" not in prompt
+    assert "Shipping 50" in prompt
+
+
+def test_prompt_giai_thich_chiet_khau_hoa_don():
+    prompt = build_extraction_prompt("nội dung OCR")
+    assert "discount_amount (int)" in prompt
+    assert "tổng chiết khấu thương mại" in prompt
+    assert "subtotal = tiền hàng sau chiết khấu, chưa thuế" in prompt
+
+
 def test_prompt_dat_unknown_o_CUOI_va_kem_dieu_kien():
     """Gemini đọc hết các loại cụ thể rồi mới tới phương án dự phòng.
 
@@ -95,6 +110,49 @@ def test_prompt_dat_unknown_o_CUOI_va_kem_dieu_kien():
     assert prompt.index('"unknown"') > prompt.index('"invoice"')
     assert prompt.rindex("unknown") > prompt.rindex("acceptance_record")
     assert "KHÔNG khớp bất kỳ loại nào ở trên" in prompt
+
+
+def test_gemini_key_uu_tien_env_truoc_secret(monkeypatch):
+    """Env thắng secret — devserver và evaluation vẫn chạy bằng evaluation/.env."""
+    import common.ai_clients as ai
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k-tu-env")
+    monkeypatch.setenv("GEMINI_API_KEY_SECRET", "ten-secret-nao-do")
+    ai._gemini_api_key_cache = None
+    assert ai.get_gemini_api_key() == "k-tu-env"
+
+
+def test_gemini_key_doc_secret_mot_lan_roi_cache(monkeypatch):
+    """Không có env thì đọc secret đúng 1 lần rồi cache trong tiến trình."""
+    import common.ai_clients as ai
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY_SECRET", "ten-secret")
+    ai._gemini_api_key_cache = None
+
+    goi = []
+
+    class FakeSecrets:
+        def get_secret_value(self, SecretId):
+            goi.append(SecretId)
+            return {"SecretString": "k-tu-secret"}
+
+    monkeypatch.setattr("boto3.client", lambda *a, **k: FakeSecrets())
+    assert ai.get_gemini_api_key() == "k-tu-secret"
+    assert ai.get_gemini_api_key() == "k-tu-secret"
+    assert goi == ["ten-secret"]
+
+
+def test_gemini_key_thieu_ca_hai_thi_loi(monkeypatch):
+    import common.ai_clients as ai
+
+    import pytest
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_SECRET", raising=False)
+    ai._gemini_api_key_cache = None
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+        ai.get_gemini_api_key()
 
 
 def test_nhan_hien_thi_khong_duoc_lan_vao_giai_thich_mau_thuan():

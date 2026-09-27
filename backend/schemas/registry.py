@@ -1,48 +1,56 @@
 from pydantic import BaseModel
 
-from .acceptance_record import AcceptanceRecord
-from .invoice import Invoice
-from .purchase_order import PurchaseOrder
-from .unknown import Unknown
+from .document import Document
 
-# THỨ TỰ CÓ Ý NGHĨA: prompt sinh ra theo đúng thứ tự này, nên "unknown" phải
-# đứng CUỐI — Gemini đọc hết các loại cụ thể rồi mới tới phương án dự phòng.
 DOCUMENT_TYPES: dict[str, type[BaseModel]] = {
-    "purchase_order": PurchaseOrder,
-    "invoice": Invoice,
-    "acceptance_record": AcceptanceRecord,
-    "unknown": Unknown,
+    "document": Document,
+    "purchase_order": Document,
+    "invoice": Document,
+    "acceptance_record": Document,
+    "unknown": Document,
+    "quotation": Document,
+    "delivery_note": Document,
+    "contract": Document,
+    "other": Document,
 }
 
-# Nhãn ĐỌC CHO NGƯỜI. `core/rules.py` dùng nó để in giải thích mâu thuẫn, nên
-# phải là danh từ ngắn gọn — đừng nhét câu lệnh dành cho Gemini vào đây.
+# Nhãn ĐỌC CHO NGƯỜI.
 DOCUMENT_TYPE_LABELS = {
+    "document": "chứng từ",
     "purchase_order": "đơn đặt hàng",
     "invoice": "hóa đơn",
     "acceptance_record": "biên bản nghiệm thu",
     "unknown": "chưa phân loại",
 }
 
-# Chỉ dẫn thêm CHO GEMINI, chỉ dùng trong describe_all_types(). Tách khỏi
-# DOCUMENT_TYPE_LABELS vì hai bảng phục vụ hai người đọc khác nhau: gộp làm một
-# thì câu lệnh "CHỈ dùng khi..." lọt vào giải thích mâu thuẫn hiện cho người
-# dùng — đã xảy ra thật, chạy thử mới lộ.
 DOCUMENT_TYPE_PROMPT_NOTES = {
+    "document": "Trích nguyên văn tên cột bảng, gán role cho cột: item_name, quantity, unit, unit_price, amount. discount_amount (int) - tổng chiết khấu thương mại; subtotal = tiền hàng sau chiết khấu, chưa thuế",
+    "invoice": "discount_amount (int) - tổng chiết khấu thương mại; subtotal = tiền hàng sau chiết khấu, chưa thuế",
     "unknown": "CHỈ chọn loại này khi tài liệu KHÔNG khớp bất kỳ loại nào ở trên",
 }
 
 DATE_FIELD_BY_TYPE = {
-    "purchase_order": "po_date",
-    "invoice": "invoice_date",
-    "acceptance_record": "record_date",
+    "document": "doc_date",
+    "purchase_order": "doc_date",
+    "invoice": "doc_date",
+    "acceptance_record": "doc_date",
     "unknown": "doc_date",
 }
 
 NUMBER_FIELD_BY_TYPE = {
-    "purchase_order": "po_number",
-    "invoice": "invoice_number",
-    "acceptance_record": "record_number",
+    "document": "doc_number",
+    "purchase_order": "doc_number",
+    "invoice": "doc_number",
+    "acceptance_record": "doc_number",
     "unknown": "doc_number",
+}
+
+ROLE_LABELS = {
+    "order": "đặt hàng",
+    "offer": "báo giá",
+    "delivery": "giao/ nghiệm thu",
+    "billing": "thanh toán",
+    "other": "khác",
 }
 
 

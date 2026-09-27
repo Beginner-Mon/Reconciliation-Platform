@@ -25,7 +25,7 @@ import os
 import boto3
 import botocore.session
 
-DEFAULT_REGION = "ap-southeast-1"
+DEFAULT_REGION = "us-east-1"
 
 
 def session() -> boto3.Session:

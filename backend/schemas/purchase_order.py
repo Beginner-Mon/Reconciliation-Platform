@@ -5,7 +5,13 @@ from pydantic import BaseModel, Field
 
 CURRENCIES = {"VND", "USD", "EUR", "JPY", "SGD"}
 DOC_NUMBER_PATTERN = r"^[A-Z0-9][A-Z0-9\-/ ]{2,50}$"
-TAX_CODE_PATTERN = r"^\d{10,13}$"
+# MST Việt Nam: 10 số (doanh nghiệp) · 10 số + "-" + 3 số (chi nhánh, đơn vị phụ
+# thuộc; có hoá đơn in liền 13 số) · 12 số (cá nhân, hộ kinh doanh dùng số định
+# danh). Pattern cũ `\d{10,13}` từ chối "0102721191-068" của hoá đơn chi nhánh
+# thật, lại nhận 11 số vô nghĩa.
+# Lưu NGUYÊN VĂN, không chuẩn hoá: AgreeRule so chuỗi thô, nên hai chứng từ in
+# cùng một mã theo hai kiểu (có/không gạch) sẽ bị báo lệch — chấp nhận ở POC.
+TAX_CODE_PATTERN = r"^(\d{10}(-?\d{3})?|\d{12})$"
 
 
 class LineItem(BaseModel):

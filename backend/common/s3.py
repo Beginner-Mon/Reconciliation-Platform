@@ -113,3 +113,14 @@ def write_object(key: str, body: bytes | str, content_type: str = "application/j
 
 def write_json(key: str, data: dict) -> None:
     write_object(key, json.dumps(data, ensure_ascii=False, default=str))
+
+
+def delete_object(key: str) -> None:
+    if not key:
+        return
+    try:
+        get_s3().delete_object(Bucket=BUCKET, Key=key)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] in {"404", "NoSuchKey", "NotFound", "NoSuchBucket"}:
+            return
+        raise

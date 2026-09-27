@@ -26,9 +26,7 @@ Textract *không* hỗ trợ tiếng Việt — đo trên hoá đơn thật thì
 nhưng số đọc đúng hết, nên cảnh báo hiện ngay tại chỗ chọn engine. Cần dấu thì
 đổi sang Document AI.
 
-> **Trạng thái: POC.** Chưa có authentication — đây là giới hạn **cố ý** ở giai
-> đoạn này, xem [docs/architecture.md](docs/architecture.md) §11. Đừng đưa dữ
-> liệu thật chưa ẩn danh vào hệ thống.
+> **Trạng thái: POC đã có auth.** API Gateway yêu cầu **Cognito JWT** (`Authorization: Bearer <id token>`); frontend có cổng đăng nhập (Amplify, bắt đổi mật khẩu lần đầu). Chỉ khi chạy ở máy với `VITE_API_URL` localhost và thiếu `VITE_COGNITO_*` mới bỏ qua đăng nhập (`env=dev` trên AWS vẫn yêu cầu JWT). Đừng đưa dữ liệu thật chưa ẩn danh vào hệ thống.
 
 ---
 
@@ -201,7 +199,7 @@ cd infra
 ```
 
 Tạo ra **10 Lambda** (4 `api` + 6 worker). Điều kiện cần trước đó: binary
-terraform tải sẵn vào `infra/bin/` · `aws configure` region `ap-southeast-1` ·
+terraform tải sẵn vào `infra/bin/` · `aws configure` region `us-east-1` ·
 `dev.tfvars` điền từ `dev.tfvars.example`.
 
 **Hướng dẫn đầy đủ: [infra/README.md](infra/README.md)** — lấy credential, tạo
@@ -217,6 +215,7 @@ processor, kiểm tra sau apply, xoá hạ tầng.
 | [docs/data-model.md](docs/data-model.md) | 5 bảng DynamoDB, GSI, layout S3 |
 | [docs/schemas.md](docs/schemas.md) | Schema từng loại chứng từ + danh sách rule đối chiếu |
 | [docs/iac-plan.md](docs/iac-plan.md) | Toàn bộ tài nguyên AWS và API surface |
+| [docs/observability.md](docs/observability.md) | Audit + monitoring 3 lớp, dashboard, cách mentor xem (đề xuất) |
 | [backend/devserver/README.md](backend/devserver/README.md) | Dev server, chi phí từng processor, dev/cloud tách nhau thế nào |
 | [frontend/README.md](frontend/README.md) | 2 màn hình, presigned POST, polling tiến độ |
 | [evaluation/README.md](evaluation/README.md) | Spike đo chất lượng AI, nguồn dataset tiếng Việt |
@@ -228,7 +227,4 @@ processor, kiểm tra sau apply, xoá hạ tầng.
 
 ## 8. Chưa làm
 
-Authentication (Cognito) · WebSocket cho progress (hiện dùng polling, nâng cấp
-sau bằng DynamoDB Streams mà không phải sửa worker) · remote tfstate ·
-dataset 50–100 tài liệu kèm ground truth · deploy frontend lên S3/CloudFront ·
-dark mode · phân trang · xoá project.
+WebSocket cho progress (hiện dùng polling, nâng cấp sau bằng DynamoDB Streams mà không phải sửa worker) · remote tfstate · dataset 50–100 tài liệu kèm ground truth · dark mode · phân trang · xoá project.

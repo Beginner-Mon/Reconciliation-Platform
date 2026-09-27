@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { LOW_CONFIDENCE, formatValue } from "../format";
 import type { DocumentView, OcrResult } from "../types";
+import { ValidationFlags } from "./ValidationFlags";
 
 /** Kết quả AI trích xuất — thứ người review thật sự cần đọc.
  *
@@ -62,6 +63,7 @@ export function ExtractionPanel({ document }: { document: DocumentView | null })
 
   return (
     <div className="space-y-6 p-6">
+      <ValidationFlags validation={document.validation} />
       {/* Trường AI trích xuất — ĐẶT TRƯỚC, đây là kết quả */}
       <section>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -88,6 +90,7 @@ export function ExtractionPanel({ document }: { document: DocumentView | null })
             <tbody>
               {Object.entries(extraction)
                 .filter(([key]) => key !== "items")
+                .filter(([key]) => key !== "tables" && key !== "other_fields")
                 .map(([key, value]) => {
                   const conf = confidence[key];
                   const low = typeof conf === "number" && conf < LOW_CONFIDENCE;
@@ -132,6 +135,27 @@ export function ExtractionPanel({ document }: { document: DocumentView | null })
           </table>
         )}
       </section>
+
+      {(extraction.tables ?? []).map((table, ti) => (
+        <div key={ti} className="overflow-auto">
+          <h3 className="font-semibold">Bảng {ti + 1}</h3>
+          <table className="w-full text-sm">
+            <thead><tr>{table.columns.map((column) => <th key={column.header} className="border p-2 text-left">{column.header}</th>)}</tr></thead>
+            <tbody>{table.rows.map((row, ri) => <tr key={ri}>{table.columns.map((column) => <td key={column.header} className="border p-2">{String(row[column.header] ?? "")}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      ))}
+
+      {Object.keys(extraction.other_fields ?? {}).length > 0 && (
+        <section>
+          <h3 className="font-semibold text-slate-700">Trường bổ sung theo chứng từ</h3>
+          <dl className="grid grid-cols-2 gap-2 text-sm">
+            {Object.entries(extraction.other_fields ?? {}).map(([key, value]) => (
+              <div key={key}><dt className="text-slate-500">{key}</dt><dd className="whitespace-pre-wrap">{value}</dd></div>
+            ))}
+          </dl>
+        </section>
+      )}
 
       {/* Text OCR thô — nguyên liệu, chỉ mở khi cần truy lỗi đọc hay lỗi hiểu */}
       <section>

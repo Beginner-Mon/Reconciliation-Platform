@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, ApiError, uploadFile } from "../api";
 import { DiscrepancyCard } from "../components/DiscrepancyCard";
@@ -30,6 +30,13 @@ export function ProjectDetail() {
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
 
   const active = data?.run?.is_active ?? false;
+  const wasActive = useRef(active);
+
+  useEffect(() => {
+    if (wasActive.current && !active) setNotice(null);
+    wasActive.current = active;
+  }, [active]);
+
   const reconciliation = data?.latest_reconciliation ?? null;
   /** Sửa tay không còn tự đối chiếu, nên kết quả có thể đã lỗi thời. */
   const stale = reconciliation?.is_stale ?? false;
@@ -177,6 +184,20 @@ export function ProjectDetail() {
     );
   }
 
+  async function removeDocument(document: { document_id: string; file_name: string }) {
+    if (!projectId) return;
+    if (!window.confirm(`Xoá ${document.file_name}?`)) return;
+    await run(
+      async () => {
+        await api.deleteDocument(projectId, document.document_id);
+        if (selectedId === document.document_id) setSelectedId(null);
+        setCheckedIds((prev) => prev.filter((id) => id !== document.document_id));
+        await refresh();
+      },
+      () => `Đã xoá ${document.file_name} và chạy lại đối soát.`,
+    );
+  }
+
   if (loading) return <p className="p-8 text-center text-slate-500">Đang tải…</p>;
   if (error && !data) {
     return (
@@ -196,6 +217,7 @@ export function ProjectDetail() {
     (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
   );
   const decided = reconciliation && reconciliation.status !== "PENDING_REVIEW";
+  const coTheDoiChieu = data.documents.some((d) => d.status === "VALIDATED");
 
   const TABS: { key: TabKey; label: string; badge?: number }[] = [
     { key: "document", label: "Tài liệu" },
@@ -215,7 +237,7 @@ export function ProjectDetail() {
           checkedIds={checkedIds}
           running={active}
           busy={busy}
-          canReconcile={data.documents.some((d) => d.status === "VALIDATED")}
+          canReconcile={coTheDoiChieu}
           reconcileStale={stale}
           onSelect={(document) => {
             setSelectedId(document.document_id);
@@ -238,6 +260,7 @@ export function ProjectDetail() {
           onUpload={upload}
           onProcess={process}
           onReconcile={reconcile}
+          onDelete={removeDocument}
         />
 
         {/* Khung phải — mọi thứ về xử lý và xem kết quả đều ở đây */}
@@ -308,13 +331,26 @@ export function ProjectDetail() {
                         {stale && (
                           <p className="mb-4 flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                             <AlertTriangle size={15} className="shrink-0" />
-                            Có chứng từ được sửa sau lần đối chiếu này — bấm
-                            <span className="font-medium">Đối chiếu lại</span> ở
-                            bên trái trước khi duyệt.
+                            {coTheDoiChieu ? (
+                              <span>
+                                Có chứng từ được sửa sau lần đối chiếu này — bấm{" "}
+                                <span className="font-medium">Đối chiếu lại</span> ở
+                                bên trái trước khi duyệt.
+                              </span>
+                            ) : (
+                              <span>
+                                Có chứng từ được sửa sau lần đối chiếu này, nhưng chưa có chứng từ nào hợp lệ để
+                                đối chiếu lại — sửa các chứng từ đang lỗi trước.
+                              </span>
+                            )}
                           </p>
                         )}
 
-                        {sorted.length === 0 ? (
+                        {reconciliation.document_ids.length === 0 ? (
+                          <p className="py-12 text-center text-slate-500">
+                            Chưa có chứng từ nào so sánh được — chứng từ đang lỗi hoặc không nhận ra loại.
+                          </p>
+                        ) : sorted.length === 0 ? (
                           <p className="flex items-center justify-center gap-2 py-12 text-center text-emerald-700"><Check size={18} />
                             Không tìm thấy mâu thuẫn nào giữa các chứng từ.
                           </p>
@@ -349,7 +385,7 @@ export function ProjectDetail() {
                                 <span className="flex items-center gap-1"><X size={14} /> Đã từ chối</span>
                               )}
                             </span>
-                          ) : (
+                          ) : reconciliation.document_ids.length > 0 ? (
                             <>
                               <button
                                 onClick={() =>
@@ -386,7 +422,7 @@ export function ProjectDetail() {
                                 Duyệt kết quả đối soát
                               </button>
                             </>
-                          )}
+                          ) : null}
                         </div>
                       </>
                     )}

@@ -1,5 +1,34 @@
 # Schemas chứng từ + Rule đối chiếu (v2)
 
+## Hợp đồng validate hiện tại (2026-09-22)
+
+Phần này thay thế các điều kiện từ chối nghiệp vụ trong mô tả schema cũ bên dưới.
+Schema chung ở `backend/schemas/document.py`. `valid=true` nghĩa là dữ liệu có cấu trúc xử lý được,
+không khẳng định chứng từ đúng hoặc đã được phê duyệt. `rule_errors` giữ mảng rỗng để tương thích API.
+MST/số chứng từ sai mẫu, ngày tương lai, tiền/số lượng bất thường và lệch phép tính đều là `flags`.
+Mỗi flag có `code`, `field`, `message`, `values`, `formula` (có thể null).
+Sai JSON/cấu trúc/kiểu không xử lý được vẫn là `schema_errors`, trạng thái `FAILED`.
+
+Phép tính dùng Decimal, chỉ kiểm khi đủ dữ liệu; không mặc định trường thiếu bằng 0 hoặc
+so tổng item với total khi thiếu subtotal. Công thức tổng thanh toán chỉ là giả định
+`subtotal + tax_amount = total_amount`, flag nhắc rõ có thể chưa tính phí/điều chỉnh.
+Không dò từ khóa shipping hoặc thêm rule cho từng loại phí.
+Trường `shipping_amount` từ dữ liệu cũ được chuyển sang `other_fields` khi validate để giữ dữ liệu.
+
+Prompt yêu cầu trích mọi nhãn–giá trị ngoài bảng, cả phần tổng kết và ghi chú, vào `other_fields`;
+không tự tính bù/sửa số để làm công thức khớp. Giao diện cho xem và thêm/sửa/xóa trường bổ sung.
+Sửa tay chạy lại validate, lưu flag mới; đối chiếu cũ trở thành stale theo luồng hiện có.
+
+Giới hạn: 3 bảng, 25 cột/bảng, 500 dòng/bảng, 500 ký tự/ô.
+Vượt giới hạn: bản đầy đủ vẫn được lưu, validate có warnings và `comparison_incomplete`.
+Nhóm có dữ liệu rút gọn hoặc không đủ cột/số lượng sẽ có cảnh báo `comparison_incomplete`,
+không tạo kết luận thiếu/thừa dựa trên bản rút gọn. Chứng từ vẫn nằm trong `checked_document_ids`.
+`validation_flags` được lưu cùng kết quả đối chiếu S3 để giữ ngữ cảnh của từng lần chạy.
+
+Giới hạn trên không bảo đảm dưới 400 KB; xem cơ chế S3 trong `docs/data-model.md`.
+Sau triển khai cần chạy lại validate hoặc lưu bản sửa để cập nhật flag của chứng từ cũ.
+Muốn bổ sung trường từng bị AI bỏ sót cần trích xuất lại hoặc bổ sung bằng Human Review.
+
 Ba loại chứng từ hiện hỗ trợ. Registry ở `backend/schemas/registry.py` là
 **nguồn sự thật duy nhất**: `validate`, prompt Gemini, và cross-check engine
 đều đọc từ đó.
@@ -47,12 +76,17 @@ Functions, API, data model. Rule cũ tự bỏ qua loại mới nếu không li�
   "po_number": "PO-2026-001",
   "items": [{ "item_name": "Laptop Dell XPS", "quantity": 100, "unit": "cái", "unit_price": 1280000 }],
   "subtotal": 128000000,
+  "discount_amount": 0,
   "tax_rate": 0.08,
   "tax_amount": 10240000,
   "total_amount": 138240000,
   "payment_due_date": "2026-09-05"
 }
 ```
+
+`discount_amount` là tổng chiết khấu thương mại của hoá đơn, số nguyên không âm,
+tuỳ chọn (mặc định `null`, khi kiểm tra coi như 0). `subtotal` là tiền hàng sau
+chiết khấu, chưa thuế. Không áp dụng chiết khấu từng dòng hoặc cho PO.
 
 ## 4. Biên bản nghiệm thu — `acceptance_record`
 
@@ -80,7 +114,11 @@ dùng chung sẽ fail validate oan.
 - Tiền tệ: **số nguyên** (VND không có phần lẻ); không dùng float cho tiền.
 - Ngày: ISO 8601 `YYYY-MM-DD`.
 - `currency` ∈ `VND, USD, EUR, JPY, SGD` (`CURRENCIES` trong `purchase_order.py`).
-- Số chứng từ: `^[A-Z0-9][A-Z0-9\-/ ]{2,50}$`. Mã số thuế: `^\d{10,13}$`.
+- Số chứng từ: `^[A-Z0-9][A-Z0-9\-/ ]{2,50}$`.
+- Mã số thuế: `^(\d{10}(-?\d{3})?|\d{12})$` — 10 số (doanh nghiệp), 10-3 số
+  (chi nhánh; nhận cả dạng in liền 13 số), 12 số (cá nhân/hộ kinh doanh). Lưu
+  **nguyên văn**; `agree_vendor_tax_code` so chuỗi thô nên `0102721191-068` và
+  `0102721191068` bị báo lệch dù cùng một mã — giới hạn đã chấp nhận ở POC.
 
 ## 6. Validate — trong 1 document (`core/validate.py`)
 
@@ -90,7 +128,7 @@ dùng chung sẽ fail validate oan.
 | `currency` hợp lệ | loại nào có `currency` |
 | Ngày không ở tương lai | dùng `DATE_FIELD_BY_TYPE` |
 | `Σ(quantity × unit_price) == total_amount` | purchase_order |
-| `Σ(quantity × unit_price) == subtotal` (hoặc `total_amount`) | invoice |
+| `Σ(quantity × unit_price) − (discount_amount hoặc 0) == subtotal` (hoặc `total_amount`) | invoice |
 | `subtotal + tax_amount == total_amount` | invoice |
 
 ## 7. Cross-check — giữa nhiều document (`core/rules.py`)

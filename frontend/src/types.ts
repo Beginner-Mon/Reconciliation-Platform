@@ -13,7 +13,8 @@ export type Step = "ocr" | "extract" | "validate";
 export type StepStatus = "running" | "done" | "failed";
 export type Severity = "critical" | "high" | "medium" | "low";
 /** "unknown" = chứng từ không khớp loại nào đã định nghĩa. Xem schemas/unknown.py. */
-export type DocumentType = "purchase_order" | "invoice" | "acceptance_record" | "unknown";
+export type DocumentType = "purchase_order" | "invoice" | "acceptance_record" | "unknown" | "document" | "quotation" | "delivery_note" | "contract" | "other";
+export type DocumentRole = "order" | "offer" | "delivery" | "billing" | "other";
 
 export interface LineItem {
   item_name: string;
@@ -22,11 +23,24 @@ export interface LineItem {
   unit_price?: number | null;
 }
 
-/** Dữ liệu AI trích xuất. Trường thay đổi theo loại chứng từ nên để mở. */
+export interface Column {
+  header: string;
+  role?: "item_name" | "quantity" | "unit" | "unit_price" | "amount" | null;
+}
+
+export interface Table {
+  columns: Column[];
+  rows: Record<string, string | number | null>[];
+}
+
 export interface Extraction {
   document_type?: DocumentType;
+  role?: DocumentRole;
   vendor?: string;
   buyer?: string;
+  seller?: string;
+  seller_tax_code?: string;
+  buyer_tax_code?: string;
   currency?: string;
   po_number?: string;
   invoice_number?: string;
@@ -34,15 +48,18 @@ export interface Extraction {
   po_date?: string;
   invoice_date?: string;
   record_date?: string;
-  // Các trường của loại "unknown"
   doc_number?: string;
   doc_date?: string;
+  order_reference?: string;
   issuer?: string;
   recipient?: string;
   reference_numbers?: string[];
   summary?: string;
   items?: LineItem[];
+  tables?: Table[];
+  other_fields?: Record<string, string>;
   subtotal?: number;
+  discount_amount?: number;
   tax_amount?: number;
   total_amount?: number;
   [key: string]: unknown;
@@ -52,6 +69,9 @@ export interface Validation {
   valid: boolean;
   schema_errors: string[];
   rule_errors: string[];
+  flags?: { code: string; field: string; message: string; values: Record<string, unknown>; formula?: string | null }[];
+  warnings?: string[];
+  comparison_incomplete?: boolean;
 }
 
 export interface DocumentView {
@@ -68,11 +88,11 @@ export interface DocumentView {
   attempt?: number;
   document_type?: DocumentType;
   po_number?: string;
-  /** Engine OCR đã chạy cho chứng từ NÀY — chọn được theo từng lần chạy nên
-   *  hai chứng từ trong cùng project có thể khác nhau. */
+  doc_number?: string;
+  order_reference?: string;
+  role?: DocumentRole;
   ocr_engine?: string;
   extraction?: Extraction;
-  /** confidence THẬT từ OCR — dùng để tô trường AI đọc không chắc. */
   confidence?: Record<string, number>;
   validation?: Validation;
   edited_fields?: string[];
@@ -90,6 +110,8 @@ export interface Project {
   document_count?: number;
   processing_run_id?: string;
   latest_reconciliation_id?: string;
+  anchor_document_ids?: string[];
+  anchor_updated_at?: string;
 }
 
 export interface Progress {
@@ -124,6 +146,9 @@ export interface Discrepancy {
   values: DiscrepancyValue[];
   difference?: number | null;
   explanation: string;
+  anchor_document_id?: string | null;
+  source?: "rule" | "ai";
+  confidence?: number | null;
 }
 
 export interface Reconciliation {
@@ -134,11 +159,11 @@ export interface Reconciliation {
   discrepancy_count: number;
   severity_summary: Partial<Record<Severity, number>>;
   status: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
-  /** Có chứng từ được sửa SAU lần đối chiếu này — kết luận đã lỗi thời.
-   *  Server tính, và cũng CHÍNH server chặn duyệt khi cờ này bật. */
   is_stale?: boolean;
   review?: { decision?: string | null; reviewer?: string | null; reviewed_at?: string | null };
   discrepancies?: Discrepancy[];
+  groups?: { key: string | null; document_ids: string[]; document_types: string[]; anchor_document_id?: string | null }[];
+  skipped_documents?: { document_id: string; reason: string }[];
 }
 
 export interface ProjectDetail {

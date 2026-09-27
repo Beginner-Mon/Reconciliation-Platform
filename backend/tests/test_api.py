@@ -1,14 +1,23 @@
 import json
 
+import pytest
+
 from api.handler import lambda_handler
 
 
-def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
-    event = {
+def call(
+    method: str,
+    path: str,
+    body: dict | None = None,
+    claims: dict | None = None,
+) -> tuple[int, dict]:
+    event: dict = {
         "requestContext": {"http": {"method": method}},
         "rawPath": path,
         "body": json.dumps(body) if body is not None else None,
     }
+    if claims is not None:
+        event["requestContext"]["authorizer"] = {"jwt": {"claims": dict(claims)}}
     response = lambda_handler(event, None)
     return response["statusCode"], json.loads(response["body"])
 
@@ -198,9 +207,8 @@ def test_them_doc_moi_chi_xu_ly_doc_moi(aws, started_executions):
     assert payload_ids == [moi[0]["document_id"]]
 
 
-def test_khong_co_ai_call_moi_cho_doc_da_xu_ly(aws, started_executions):
-    from common.dynamodb import AUDIT_LOG_TABLE
-    from common.dynamodb import scan_table
+def test_khong_co_ai_call_moi_cho_doc_da_xu_ly(aws, started_executions, capsys):
+    from tests.test_audit import audit_events
 
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
@@ -215,9 +223,7 @@ def test_khong_co_ai_call_moi_cho_doc_da_xu_ly(aws, started_executions):
 
     da_xu_ly = {created[0]["document_id"], created[1]["document_id"]}
     ai_calls = [
-        item
-        for item in scan_table(AUDIT_LOG_TABLE)
-        if item["action"] == "AI_CALL" and item["entity_id"] in da_xu_ly
+        item for item in audit_events(capsys, "AI_CALL") if item["entity_id"] in da_xu_ly
     ]
     assert ai_calls == []
 
@@ -331,7 +337,7 @@ def test_engine_ngoai_danh_sach_app_tra_400(aws, started_executions):
     assert started_executions == []
 
 
-def test_engine_duoc_ghi_vao_audit(aws, started_executions):
+def test_engine_duoc_ghi_vao_audit(aws, started_executions, capsys):
     """Không ghi thì vài tuần sau không ai biết con số đo được là của engine nào."""
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")
@@ -339,7 +345,7 @@ def test_engine_duoc_ghi_vao_audit(aws, started_executions):
 
     call("POST", f"/projects/{project_id}/process", {"engine": "dococr"})
 
-    assert audit_records("PROCESS_RUN")[0]["detail"]["ocr_engine"] == "dococr"
+    assert audit_records(capsys, "PROCESS_RUN")[0]["detail"]["ocr_engine"] == "dococr"
 
 
 def test_khong_co_endpoint_liet_ke_engine(aws):
@@ -358,14 +364,13 @@ def test_khong_co_endpoint_liet_ke_engine(aws):
 # và tệ hơn: `force_edited` cho AI ghi đè công review mà không để lại vết nào.
 
 
-def audit_records(action: str) -> list[dict]:
-    from common.dynamodb import AUDIT_LOG_TABLE
-    from common.dynamodb import scan_table
+def audit_records(capsys, action: str) -> list[dict]:
+    from tests.test_audit import audit_events
 
-    return [item for item in scan_table(AUDIT_LOG_TABLE) if item["action"] == action]
+    return audit_events(capsys, action)
 
 
-def test_process_ghi_audit_kem_ly_do_skip(aws, started_executions):
+def test_process_ghi_audit_kem_ly_do_skip(aws, started_executions, capsys):
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
     for document in created:
@@ -375,7 +380,7 @@ def test_process_ghi_audit_kem_ly_do_skip(aws, started_executions):
 
     call("POST", f"/projects/{project_id}/process")
 
-    runs = audit_records("PROCESS_RUN")
+    runs = audit_records(capsys, "PROCESS_RUN")
     assert len(runs) == 1
     detail = runs[0]["detail"]
     assert runs[0]["entity_id"] == project_id
@@ -387,7 +392,7 @@ def test_process_ghi_audit_kem_ly_do_skip(aws, started_executions):
     assert all("đã xử lý xong" in s["reason"] for s in detail["skipped"])
 
 
-def test_process_ghi_lai_co_force(aws, started_executions):
+def test_process_ghi_lai_co_force(aws, started_executions, capsys):
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")
     put_file(created[0]["s3_key"])
@@ -395,13 +400,13 @@ def test_process_ghi_lai_co_force(aws, started_executions):
 
     call("POST", f"/projects/{project_id}/process", {"force": True})
 
-    detail = audit_records("PROCESS_RUN")[0]["detail"]
+    detail = audit_records(capsys, "PROCESS_RUN")[0]["detail"]
     assert detail["force"] is True
     assert detail["run_id"]
     assert detail["processed"] == [created[0]["document_id"]]
 
 
-def test_force_edited_ghi_vet_ghi_de_cong_review(aws, started_executions):
+def test_force_edited_ghi_vet_ghi_de_cong_review(aws, started_executions, capsys):
     """Thao tác phá huỷ duy nhất trong hệ thống phải có dấu vết riêng."""
     from common.dynamodb import update_document
 
@@ -417,23 +422,23 @@ def test_force_edited_ghi_vet_ghi_de_cong_review(aws, started_executions):
         "POST", f"/projects/{project_id}/process", {"force": True, "force_edited": True}
     )
 
-    overwritten = audit_records("EDIT_OVERWRITTEN")
+    overwritten = audit_records(capsys, "EDIT_OVERWRITTEN")
     assert len(overwritten) == 1
     assert overwritten[0]["entity_id"] == created[0]["document_id"]
     detail = overwritten[0]["detail"]
     assert detail["edited_fields"] == ["vendor"]
     assert detail["edited_by"] == "tri"
-    assert detail["project_id"] == project_id
+    assert overwritten[0]["project_id"] == project_id
 
 
-def test_process_binh_thuong_khong_sinh_canh_bao_ghi_de(aws, started_executions):
+def test_process_binh_thuong_khong_sinh_canh_bao_ghi_de(aws, started_executions, capsys):
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf")
     put_file(created[0]["s3_key"])
 
     call("POST", f"/projects/{project_id}/process")
 
-    assert audit_records("EDIT_OVERWRITTEN") == []
+    assert audit_records(capsys, "EDIT_OVERWRITTEN") == []
 
 
 # --- Upload trùng nội dung --------------------------------------------------
@@ -582,7 +587,7 @@ def test_duyet_va_tu_choi_dung_CHUNG_mot_endpoint(aws):
     """Duyệt và từ chối ghi cùng một bảng, cùng một shape, khác đúng một enum —
     không có side effect nào riêng nên không đáng tách làm hai route.
 
-    Vết audit không mất gì: `log_review` đã ghi `decision` vào `audit_log`.
+    Vết audit không mất gì: `log_review` đã ghi `decision` vào dòng audit.
     """
     for quyet_dinh in ("APPROVED", "REJECTED"):
         reconciliation_id = _reconciliation_id(_project_da_doi_chieu())
@@ -590,7 +595,8 @@ def test_duyet_va_tu_choi_dung_CHUNG_mot_endpoint(aws):
         status, body = call(
             "POST",
             f"/reconciliations/{reconciliation_id}/review",
-            {"decision": quyet_dinh, "reviewer": "tri"},
+            {"decision": quyet_dinh},
+            claims={"cognito:username": "tri"},
         )
 
         assert status == 200
@@ -605,6 +611,30 @@ def test_review_lan_hai_tra_409(aws):
 
     assert call("POST", f"/reconciliations/{reconciliation_id}/review", body)[0] == 200
     assert call("POST", f"/reconciliations/{reconciliation_id}/review", body)[0] == 409
+
+
+@pytest.mark.parametrize("decision", ["APPROVED", "REJECTED"])
+def test_khong_review_dot_doi_chieu_rong(aws, capsys, decision):
+    from common.dynamodb import RECONCILIATIONS_TABLE, get_item
+    from test_audit import audit_events
+
+    project_id = make_project()
+    document = add_documents(project_id, "unknown.pdf")[0]
+    mark_processed(document["document_id"], {"document_type": "unknown"})
+    reconciliation_id = _reconciliation_id(project_id)
+    key = {"reconciliation_id": reconciliation_id}
+    before = get_item(RECONCILIATIONS_TABLE, key)
+    assert before["document_ids"] == []
+    assert before["status"] == "PENDING_REVIEW"
+
+    status, body = call(
+        "POST", f"/reconciliations/{reconciliation_id}/review", {"decision": decision}
+    )
+
+    assert status == 409
+    assert "không có gì để duyệt" in body["error"]
+    assert get_item(RECONCILIATIONS_TABLE, key) == before
+    assert audit_events(capsys, "REVIEW_DECISION") == []
 
 
 def test_quyet_dinh_chi_nhan_APPROVED_hoac_REJECTED(aws):
@@ -811,3 +841,185 @@ def test_api_khong_duoc_import_workers_reconcile():
         if "workers.reconcile" in dong or "from workers import" in dong
     ]
     assert not pham, f"api/ đang import thẳng workers: {pham}"
+
+
+# --- Danh tính lấy từ TOKEN, không lấy từ body (Task 1) --------------------
+
+
+def test_request_user_lay_username_tu_token(aws):
+    from api.http import request_user
+
+    event = {
+        "requestContext": {
+            "authorizer": {"jwt": {"claims": {"cognito:username": "tri", "sub": "abc"}}}
+        }
+    }
+    assert request_user(event) == "tri"
+    event2 = {"requestContext": {"authorizer": {"jwt": {"claims": {"sub": "sub-123"}}}}}
+    assert request_user(event2) == "sub-123"
+    event3 = {
+        "requestContext": {
+            "authorizer": {"jwt": {"claims": {"email": "tri@example.com", "sub": "abc"}}}
+        }
+    }
+    assert request_user(event3) == "abc"
+
+
+def test_request_user_uu_tien_cognito_username_truoc_email(aws):
+    from api.http import request_user
+
+    event = {
+        "requestContext": {
+            "authorizer": {
+                "jwt": {"claims": {"email": "a@b.com", "cognito:username": "tri", "sub": "s"}}
+            }
+        }
+    }
+    assert request_user(event) == "tri"
+
+
+def test_email_gia_mao_khong_doi_duoc_username(aws):
+    """Token có username tri nhưng email sep@congty.vn thì danh tính phải là tri.
+
+    App client không khai write_attributes chứa email nên người dùng tự sửa
+    email bằng access token cũng không đổi được danh tính audit.
+    """
+    from api.http import request_user
+
+    event = {
+        "requestContext": {
+            "authorizer": {
+                "jwt": {
+                    "claims": {
+                        "cognito:username": "tri",
+                        "email": "sep@congty.vn",
+                        "sub": "sub-123",
+                    }
+                }
+            }
+        }
+    }
+    assert request_user(event) == "tri"
+
+
+def test_request_user_khong_co_claims_ve_DEV_USER(aws):
+    from api.http import DEV_USER, request_user
+
+    assert request_user({}) == DEV_USER
+    assert request_user({"requestContext": {}}) == DEV_USER
+    assert request_user({"requestContext": {"authorizer": {}}}) == DEV_USER
+    assert request_user({"requestContext": {"authorizer": {"jwt": {"claims": {}}}}}) == DEV_USER
+
+
+def test_body_reviewer_bi_bo_qua_khi_co_token(aws):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
+    mark_processed(created[0]["document_id"], PO_DATA)
+    mark_processed(created[1]["document_id"], INVOICE_DATA)
+    reconciliation_id = _reconciliation_id(project_id)
+
+    status, body = call(
+        "POST",
+        f"/reconciliations/{reconciliation_id}/review",
+        {"decision": "APPROVED", "reviewer": "ai-do-khac"},
+        claims={"cognito:username": "tri"},
+    )
+    assert status == 200
+    assert body["review"]["reviewer"] == "tri"
+    assert body["review"]["reviewer"] != "ai-do-khac"
+
+    from common.dynamodb import RECONCILIATIONS_TABLE, get_item
+
+    record = get_item(RECONCILIATIONS_TABLE, {"reconciliation_id": reconciliation_id})
+    assert record["review"]["reviewer"] == "tri"
+
+
+def test_edit_document_body_reviewer_bi_bo_qua(aws, capsys):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    mark_processed(created[0]["document_id"], PO_DATA)
+
+    status, body = call(
+        "PATCH",
+        f"/projects/{project_id}/documents/{created[0]['document_id']}",
+        {"fields": {"vendor": "XYZ"}, "reviewer": "ai-do-khac"},
+        claims={"cognito:username": "tri"},
+    )
+    assert status == 200
+    from common.dynamodb import DOCUMENTS_TABLE, get_item
+
+    doc = get_item(DOCUMENTS_TABLE, {"document_id": created[0]["document_id"]})
+    assert doc["edited_by"] == "tri"
+
+    logs = audit_records(capsys, "REVIEW_EDIT")
+    assert any(l["actor"] == "tri" for l in logs)
+    assert not any(l["actor"] == "ai-do-khac" for l in logs)
+    assert all("reviewer" not in l["detail"] for l in logs)
+
+
+def test_create_project_lay_created_by_tu_token(aws):
+    status, body = call("POST", "/projects", {"name": "X"}, claims={"cognito:username": "tri"})
+    assert status == 201
+    assert body["created_by"] == "tri"
+
+    status2, body2 = call(
+        "POST", "/projects", {"name": "Y", "created_by": "ai-do-khac"}, claims={"cognito:username": "tri2"}
+    )
+    assert body2["created_by"] == "tri2"
+
+
+def test_khong_co_token_thi_roi_ve_DEV_USER(aws, started_executions, capsys):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    mark_processed(created[0]["document_id"], PO_DATA)
+
+    status, body = call(
+        "PATCH",
+        f"/projects/{project_id}/documents/{created[0]['document_id']}",
+        {"fields": {"vendor": "XYZ"}},
+    )
+    assert status == 200
+    from common.dynamodb import DOCUMENTS_TABLE, get_item
+
+    doc = get_item(DOCUMENTS_TABLE, {"document_id": created[0]["document_id"]})
+    assert doc["edited_by"] == "dev"
+
+    status2, body2 = call("POST", "/projects", {"name": "NoAuth"})
+    assert body2["created_by"] == "dev"
+
+    project_id2 = make_project()
+    created2 = add_documents(project_id2, "PO-001.pdf")
+    from common.s3 import get_s3
+
+    get_s3().put_object(Bucket="test-documents-bucket", Key=created2[0]["s3_key"], Body=b"%PDF fake2")
+    status3, body3 = call("POST", f"/projects/{project_id2}/process", {})
+    assert status3 == 202
+    logs = audit_records(capsys, "PROCESS_RUN")
+    assert any(l["actor"] == "dev" for l in logs)
+
+
+def test_process_ghi_triggered_by_tu_token(aws, started_executions, capsys):
+    project_id = make_project()
+    created = add_documents(project_id, "PO-001.pdf")
+    from common.s3 import get_s3
+
+    get_s3().put_object(Bucket="test-documents-bucket", Key=created[0]["s3_key"], Body=b"%PDF 123")
+    status, body = call(
+        "POST", f"/projects/{project_id}/process", {}, claims={"cognito:username": "tri"}
+    )
+    assert status == 202
+    logs = audit_records(capsys, "PROCESS_RUN")
+    assert logs[0]["actor"] == "tri"
+
+
+def test_khong_con_poc_user_trong_backend():
+    import pathlib
+
+    backend = pathlib.Path(__file__).resolve().parents[1]
+    found = []
+    for p in backend.rglob("*.py"):
+        if "tests" in p.parts:
+            continue
+        if "poc-user" in p.read_text(encoding="utf-8"):
+            found.append(str(p))
+    assert not found, f"còn poc-user trong: {found}"

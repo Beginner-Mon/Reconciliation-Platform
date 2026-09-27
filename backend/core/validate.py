@@ -1,106 +1,214 @@
 from datetime import date
+from decimal import Decimal, InvalidOperation
+import re
 
 from pydantic import BaseModel, ValidationError
 
-from schemas import (
-    CURRENCIES,
-    DATE_FIELD_BY_TYPE,
-    AcceptanceRecord,
-    Invoice,
-    PurchaseOrder,
-    model_for,
-    supported_types,
-)
+from schemas import CURRENCIES, model_for, supported_types
+from schemas.document import enforce_limits
+
+
+def _migrate_legacy(data: dict) -> dict:
+    # Dịch extraction cũ (items, po_number...) sang schema mới tables
+    if "tables" in data:
+        return data
+    items = data.get("items")
+    if not isinstance(items, list):
+        return data
+    # Map legacy fields per type
+    dt = data.get("document_type")
+    if dt == "purchase_order":
+        doc_number = data.get("po_number")
+        doc_date = data.get("po_date")
+        order_ref = None
+    elif dt == "invoice":
+        doc_number = data.get("invoice_number")
+        doc_date = data.get("invoice_date")
+        order_ref = data.get("po_number")
+    elif dt == "acceptance_record":
+        doc_number = data.get("record_number")
+        doc_date = data.get("record_date")
+        order_ref = data.get("po_number")
+    else:
+        # Custom type như delivery_note: note_number là số chứng từ riêng
+        doc_number = data.get("doc_number") or data.get("note_number") or data.get("invoice_number") or data.get("record_number") or data.get("po_number")
+        doc_date = data.get("doc_date") or data.get("po_date") or data.get("invoice_date") or data.get("record_date")
+        order_ref = data.get("po_number") or data.get("order_reference")
+        # Gán role mặc định cho loại mới: nếu có po_number thì coi là delivery, không thì other
+        if data.get("document_type") not in ("other", "unknown"):
+            role = "delivery" if order_ref else "other"
+        else:
+            role = "other"
+    seller = data.get("vendor") or data.get("issuer")
+    buyer = data.get("buyer") or data.get("recipient")
+    seller_tax = data.get("vendor_tax_code")
+    buyer_tax = data.get("buyer_tax_code")
+    # role mapping
+    role_map = {"purchase_order": "order", "invoice": "billing", "acceptance_record": "delivery", "unknown": "other"}
+    role = role_map.get(data.get("document_type"), "other")
+    if data.get("document_type") == "unknown":
+        role = "other"
+    # Build table
+    cols = [
+        {"header": "item_name", "role": "item_name"},
+        {"header": "quantity", "role": "quantity"},
+        {"header": "unit", "role": "unit"},
+        {"header": "unit_price", "role": "unit_price"},
+        {"header": "amount", "role": "amount"},
+    ]
+    rows = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        rows.append({
+            "item_name": it.get("item_name"),
+            "quantity": it.get("quantity"),
+            "unit": it.get("unit"),
+            "unit_price": it.get("unit_price"),
+            "amount": it.get("amount"),
+        })
+    tables = [{"columns": cols, "rows": rows}] if rows else []
+    new_data = {
+        "document_type": data.get("document_type"),
+        "role": role,
+        "doc_number": doc_number,
+        "doc_date": doc_date,
+        "order_reference": order_ref,
+        "seller": seller,
+        "seller_tax_code": seller_tax,
+        "buyer": buyer,
+        "buyer_tax_code": buyer_tax,
+        "currency": data.get("currency"),
+        "total_amount": data.get("total_amount"),
+        "subtotal": data.get("subtotal"),
+        "discount_amount": data.get("discount_amount"),
+        "tax_amount": data.get("tax_amount"),
+        "other_fields": dict(data.get("other_fields") or {}),
+        "tables": tables,
+    }
+    # keep original other fields
+    for k in ["payment_terms", "delivery_date", "payment_due_date", "accepted_by", "notes", "summary"]:
+        if data.get(k):
+            new_data["other_fields"][k] = str(data[k])
+    if data.get("shipping_amount") is not None:
+        new_data["other_fields"].setdefault("shipping_amount", str(data["shipping_amount"]))
+    return new_data
 
 
 def validate_document(data: dict) -> dict:
+    result = {"valid": False, "document_type": None, "model": None,
+              "schema_errors": [], "rule_errors": [], "warnings": [], "flags": [],
+              "comparison_incomplete": False}
+    if not isinstance(data, dict):
+        result["schema_errors"] = ["Dữ liệu trích xuất phải là object"]
+        return result
     document_type = data.get("document_type")
-    schema = model_for(document_type)
+    result["document_type"] = document_type
+    schema = model_for(document_type) if isinstance(document_type, str) else None
     if schema is None:
-        return {
-            "valid": False,
-            "document_type": document_type,
-            "model": None,
-            "schema_errors": [
-                f"document_type không được hỗ trợ: {document_type} "
-                f"(hỗ trợ: {', '.join(supported_types())})"
-            ],
-            "rule_errors": [],
-        }
-
+        result["schema_errors"] = [f"document_type không được hỗ trợ: {document_type} (hỗ trợ: {', '.join(supported_types())})"]
+        return result
     try:
-        model = schema.model_validate(data)
+        migrated = _migrate_legacy(dict(data))
+        if "shipping_amount" in migrated:
+            migrated = {**migrated, "other_fields": dict(migrated.get("other_fields") or {})}
+            value = migrated.pop("shipping_amount")
+            if value is not None:
+                migrated["other_fields"].setdefault("shipping_amount", str(value))
+        truncated, warnings = enforce_limits(migrated)
+        result["warnings"] = warnings
+        model = schema.model_validate(truncated)
     except ValidationError as exc:
-        return {
-            "valid": False,
-            "document_type": document_type,
-            "model": None,
-            "schema_errors": [
-                f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()
-            ],
-            "rule_errors": [],
-        }
-
-    rule_errors = check_business_rules(model)
-    return {
-        "valid": not rule_errors,
-        "document_type": document_type,
-        "model": model,
-        "schema_errors": [],
-        "rule_errors": rule_errors,
-    }
+        result["schema_errors"] = [f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()]
+        return result
+    except (ValueError, TypeError, AttributeError) as exc:
+        result["schema_errors"] = [f"Cấu trúc dữ liệu không hợp lệ: {exc}"]
+        return result
+    result.update(valid=True, model=model, comparison_incomplete=bool(warnings))
+    result["flags"] = business_flags(model, incomplete=bool(warnings))
+    return result
 
 
-def _rules_purchase_order(model: PurchaseOrder) -> list[str]:
-    errors = []
-    if model.item_total != model.total_amount:
-        errors.append(
-            f"Tổng item ({model.item_total}) không khớp total_amount ({model.total_amount})"
-        )
-    return errors
+def _number(value):
+    try:
+        number = Decimal(str(value))
+        return number if number.is_finite() else None
+    except (InvalidOperation, ValueError, TypeError):
+        return None
 
 
-def _rules_invoice(model: Invoice) -> list[str]:
-    errors = []
-    expected_item_total = model.subtotal if model.subtotal is not None else model.total_amount
-    if model.item_total != expected_item_total:
-        label = "subtotal" if model.subtotal is not None else "total_amount"
-        errors.append(
-            f"Tổng item ({model.item_total}) không khớp {label} ({expected_item_total})"
-        )
-    if model.subtotal is not None and model.tax_amount is not None:
-        if model.subtotal + model.tax_amount != model.total_amount:
-            errors.append("subtotal + tax_amount != total_amount")
-    return errors
+def business_flags(model: BaseModel, incomplete: bool = False) -> list[dict]:
+    from schemas.document import DOC_NUMBER_PATTERN, TAX_CODE_PATTERN
+    from types import SimpleNamespace
+    model = SimpleNamespace(**{name: getattr(model, name, default) for name, default in {
+        "currency": None, "doc_date": None, "seller_tax_code": None, "buyer_tax_code": None,
+        "doc_number": None, "order_reference": None, "subtotal": None, "total_amount": None,
+        "discount_amount": None, "tax_amount": None, "tables": [],
+    }.items()})
+    flags = []
 
+    def flag(code, field, message, values=None, formula=None):
+        flags.append({"code": code, "field": field, "message": message,
+                      "values": values or {}, "formula": formula})
 
-def _rules_acceptance_record(model: AcceptanceRecord) -> list[str]:
-    return []
+    if model.currency is not None and model.currency not in CURRENCIES:
+        flag("currency", "currency", "Cần kiểm tra mã tiền tệ ngoài danh sách hỗ trợ", {"currency": model.currency})
+    if isinstance(model.doc_date, date) and model.doc_date > date.today():
+        flag("future_date", "doc_date", "Cần kiểm tra doc_date ở tương lai", {"doc_date": str(model.doc_date)})
+    for field, pattern in [("seller_tax_code", TAX_CODE_PATTERN), ("buyer_tax_code", TAX_CODE_PATTERN),
+                           ("doc_number", DOC_NUMBER_PATTERN), ("order_reference", DOC_NUMBER_PATTERN)]:
+        value = getattr(model, field)
+        if value is not None and not re.fullmatch(pattern, value):
+            flag("format", field, f"Cần kiểm tra định dạng {field}", {field: value})
+    for field in ("subtotal", "total_amount", "discount_amount", "tax_amount"):
+        value = getattr(model, field)
+        if value is not None and (value < 0 or (field in ("subtotal", "total_amount") and value == 0)):
+            flag("amount_sign", field, f"Cần kiểm tra giá trị {field}", {field: value})
 
-
-RULES_BY_TYPE = {
-    "purchase_order": _rules_purchase_order,
-    "invoice": _rules_invoice,
-    "acceptance_record": _rules_acceptance_record,
-}
+    amounts = []
+    complete = not incomplete
+    for ti, table in enumerate(model.tables):
+        headers = {c.role: c.header for c in table.columns if c.role}
+        if not {"item_name", "quantity"} <= headers.keys():
+            flag("insufficient_data", f"tables.{ti}", "Thiếu cột tên hàng hoặc số lượng; chưa đủ dữ liệu kiểm tra dòng hàng")
+            complete = False
+            continue
+        if len(headers) != sum(c.role is not None for c in table.columns):
+            flag("insufficient_data", f"tables.{ti}", "Nhiều cột cùng vai trò; chưa xác định được cột dùng để tính")
+            complete = False
+            continue
+        for ri, row in enumerate(table.rows):
+            field = f"tables.{ti}.rows.{ri}"
+            values = {role: row.get(headers.get(role)) for role in ("quantity", "unit_price", "amount")}
+            qty, price, amount = (_number(values[r]) for r in ("quantity", "unit_price", "amount"))
+            if values["quantity"] is not None and (qty is None or qty <= 0):
+                flag("quantity", field + "." + headers["quantity"], "Cần kiểm tra quantity không phải số dương", values)
+            if all(v is not None for v in (qty, price, amount)):
+                if qty * price != amount:
+                    flag("row_amount", field, "Cần kiểm tra thành tiền theo giả định số lượng × đơn giá; có thể có điều chỉnh trên dòng", values, "quantity × unit_price = amount")
+            else:
+                flag("insufficient_data", field, "Chưa đủ dữ liệu số để kiểm tra quantity × unit_price = amount", values)
+            if amount is None:
+                complete = False
+            else:
+                amounts.append(amount)
+    if incomplete:
+        flag("incomplete_document", "tables", "Dữ liệu vượt giới hạn và đã rút gọn; không kết luận tổng hoặc thiếu/thừa trên bản này")
+    if complete and amounts and model.subtotal is not None and model.discount_amount is not None:
+        total_rows = sum(amounts, Decimal(0))
+        if total_rows - model.discount_amount != model.subtotal:
+            flag("subtotal_formula", "subtotal", "Cần kiểm tra subtotal theo giả định tiền hàng sau chiết khấu; công thức có thể chưa phản ánh chứng từ",
+                 {"sum_amount": str(total_rows), "discount_amount": model.discount_amount, "subtotal": model.subtotal}, "Σ amount − discount_amount = subtotal")
+    else:
+        flag("insufficient_data", "subtotal", "Chưa đủ dữ liệu kiểm tra tổng dòng hàng và chiết khấu; không mặc định trường thiếu bằng 0")
+    if all(v is not None for v in (model.subtotal, model.tax_amount, model.total_amount)):
+        if Decimal(model.subtotal) + Decimal(model.tax_amount) != Decimal(model.total_amount):
+            flag("total_formula", "total_amount", "Cần kiểm tra tổng thanh toán: công thức subtotal + tax chưa bao gồm phí hoặc điều chỉnh khác",
+                 {"subtotal": model.subtotal, "tax_amount": model.tax_amount, "total_amount": model.total_amount}, "subtotal + tax_amount = total_amount")
+    else:
+        flag("insufficient_data", "total_amount", "Chưa đủ subtotal, tax_amount và total_amount để kiểm tra tổng thanh toán")
+    return flags
 
 
 def check_business_rules(model: BaseModel) -> list[str]:
-    errors: list[str] = []
-    document_type = getattr(model, "document_type", None)
-
-    currency = getattr(model, "currency", None)
-    if currency is not None and currency not in CURRENCIES:
-        errors.append(f"currency không hợp lệ: {currency}")
-
-    date_field = DATE_FIELD_BY_TYPE.get(document_type)
-    if date_field:
-        value = getattr(model, date_field, None)
-        if isinstance(value, date) and value > date.today():
-            errors.append(f"{date_field} ở tương lai")
-
-    checker = RULES_BY_TYPE.get(document_type)
-    if checker:
-        errors.extend(checker(model))
-
-    return errors
+    return [flag["message"] for flag in business_flags(model)]

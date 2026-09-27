@@ -34,7 +34,11 @@ bằng event.
 
 ### DynamoDB (PAY_PER_REQUEST)
 `projects`, `documents` (+ GSI `project_id-index`, `po_number-index`),
-`processing_runs`, `reconciliations`, `audit_log` (PK `entity_id`, SK `timestamp`).
+`processing_runs`, `reconciliations`.
+
+> Audit là dòng JSON trong CloudWatch Logs (10 log group giữ 10 năm theo biến
+> `log_retention_days`, + 1 dashboard).
+> Thiết kế và lý do: `observability.md`.
 
 ### Lambda (Python 3.11) — 10 function, **mỗi cái một zip riêng**
 
@@ -75,12 +79,12 @@ Type **STANDARD** (OCR có thể vượt 5 phút; cần exactly-once + execution
 Mỗi Lambda `api` một role riêng, quyền cắt theo đúng việc nó làm
 (`local.api_functions` trong `main.tf` giữ handler và bộ quyền **cùng một chỗ**):
 
-| Role | dynamodb | s3 | states |
-|---|---|---|---|
-| `api-projects` | GetItem, Query, **Scan**, PutItem | GetObject | — |
-| `api-documents` | GetItem, Query, PutItem, UpdateItem | GetObject, PutObject | — |
-| `api-review` | GetItem, Query, PutItem, UpdateItem | GetObject, PutObject | — |
-| `api-process` | GetItem, Query, PutItem, UpdateItem | GetObject, PutObject | **StartExecution, DescribeExecution** |
+| Role | dynamodb | s3 | states | lambda:InvokeFunction |
+|---|---|---|---|---|
+| `api-projects` | GetItem, Query, **Scan**, PutItem | GetObject | — | — |
+| `api-documents` | GetItem, Query, PutItem, UpdateItem | GetObject, PutObject | — | — |
+| `api-review` | GetItem, Query, PutItem, UpdateItem | GetObject | — | **reconcile** |
+| `api-process` | GetItem, Query, PutItem, UpdateItem | GetObject | **StartExecution, DescribeExecution** | **reconcile** |
 
 - `states:*` **chỉ** ở `api-process` — đó là quyền tiêu tiền AI, và chỉ
   `api/process.py` gọi tới.
@@ -92,8 +96,8 @@ Mỗi Lambda `api` một role riêng, quyền cắt theo đúng việc nó làm
 - SFN role: `lambda:InvokeFunction` lên đúng 6 worker.
 
 ### API Gateway
-HTTP API (rẻ, đơn giản) — **chưa có auth** (giới hạn cố ý của POC). CORS mở cho
-frontend. 12 route, mỗi route trỏ tới **một trong 4 integration** theo bảng
+HTTP API (rẻ, đơn giản) — **có auth** (Cognito JWT authorizer, `authorization_type=JWT` trên cả 11 route; `allow_headers` gồm `authorization`). CORS mở cho
+frontend (`local.cors_origins` gồm `var.frontend_origins` + Amplify URL). 11 route, mỗi route trỏ tới **một trong 4 integration** theo bảng
 `local.api_routes`:
 
 ```
@@ -119,10 +123,13 @@ khoá lại. Lệch một bên là 404 rất khó truy.
 
 ## 4. Google (GCP)
 
-Enable API `documentai.googleapis.com`, `generativelanguage.googleapis.com`.
-Document AI: processor **Form Parser** (tiếng Việt dùng generic, KHÔNG dùng
-specialized Invoice/PO Parser vì không hỗ trợ tiếng Việt).
-Service account quyền tối thiểu, key → `aws_secretsmanager_secret`.
+Document AI: processor generic (tiếng Việt KHÔNG dùng được specialized Invoice/PO
+Parser). Terraform chỉ tạo **service account + key**, key → `aws_secretsmanager_secret`.
+
+Bật API và gán `roles/documentai.apiUser` là **thao tác tay một lần**
+(`infra/README.md` §3) — cố ý, vì để Terraform làm thì tài khoản chạy nó phải có
+`Service Usage Admin` và `Project IAM Admin`; vai trò thứ hai cho phép tự gán
+Owner. Tài khoản chạy Terraform chỉ cần Service Account Admin + Key Admin.
 
 ## 5. Đóng gói backend
 
@@ -133,11 +140,14 @@ mỗi Lambda MỘT gói, chỉ chứa thư viện chính nó cần (bảng ở `
 
 ## 6. Lưu ý
 
-- Không commit secret thật; `dev.tfvars`, `*.tfstate`, `artifacts/`, `build/`
-  đã gitignore.
+- Không commit secret thật; `dev.tfvars`, `*.tfstate`, `artifacts/`, `build/`,
+  `backend.hcl` đã gitignore.
 - Version pin provider (AWS ~> 5.x, Google ~> 6.x, Random ~> 3.6).
-- Remote state: S3 backend + DynamoDB lock (tạo thủ công lần đầu) — chưa cấu hình.
-- **Chưa có**: Cognito/auth, WebSocket API, EventBridge (progress dùng polling).
+- Remote state: S3 backend + khoá file S3 (`use_lockfile`, không dùng DynamoDB đã
+  deprecated) — bucket tạo bằng stack `infra/bootstrap/` riêng, state bootstrap
+  để local. 4 bảng DynamoDB bật PITR; bucket chứng từ bật versioning, bản cũ
+  hết hạn sau 30 ngày.
+- **Chưa có**: WebSocket API, EventBridge (progress dùng polling). **Đã có**: Cognito User Pool + JWT authorizer (chỉ bypass khi `VITE_API_URL` localhost và thiếu `VITE_COGNITO_*`).
 
 ## 7. Thứ tự triển khai
 
@@ -145,4 +155,4 @@ mỗi Lambda MỘT gói, chỉ chứa thư viện chính nó cần (bảng ở `
 2. Spike test thủ công trên 5–10 file tiếng Việt → chốt chất lượng OCR/extract.
 3. `build_backend.ps1` → `terraform init` → `plan` → `apply`.
 4. Chạy kịch bản end-to-end ở `infra/README.md` mục 7.
-5. Frontend hosting: S3 + CloudFront (chưa làm).
+5. Frontend hosting: **Amplify Hosting** (deploy thủ công bằng zip, không nối GitHub). Xem `infra/scripts/deploy_frontend.ps1`.

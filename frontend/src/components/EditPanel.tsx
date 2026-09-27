@@ -2,7 +2,8 @@ import { AlertTriangle, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { LOW_CONFIDENCE, formatMoney } from "../format";
-import type { DocumentView, Extraction, LineItem } from "../types";
+import type { DocumentView, Extraction, LineItem, Table } from "../types";
+import { ValidationFlags } from "./ValidationFlags";
 
 /** Sửa tay dữ liệu AI trích sai. Trước đây là modal, giờ là một tab.
  *  Trường có confidence thấp được tô vàng — đó là chỗ OCR hay đọc sai nhất.
@@ -22,6 +23,7 @@ const NHAN: Record<string, string> = {
   invoice_date: "Ngày hóa đơn",
   record_date: "Ngày nghiệm thu",
   subtotal: "Tiền hàng",
+  discount_amount: "Chiết khấu",
   tax_amount: "Thuế",
   total_amount: "Tổng tiền",
   payment_due_date: "Hạn thanh toán",
@@ -31,7 +33,7 @@ const NHAN: Record<string, string> = {
   notes: "Ghi chú",
 };
 
-const LA_SO = new Set(["subtotal", "tax_amount", "total_amount"]);
+const LA_SO = new Set(["subtotal", "discount_amount", "tax_amount", "total_amount"]);
 
 function parseNumber(text: string): number {
   return Number(text.replace(/[^\d-]/g, "")) || 0;
@@ -52,6 +54,8 @@ export function EditPanel({ document, onSaved }: Props) {
 
   const [values, setValues] = useState<Record<string, string>>({});
   const [items, setItems] = useState<LineItem[]>([]);
+  const [tables, setTables] = useState<Table[]>([]);
+  const [otherFields, setOtherFields] = useState<[string, string][]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -60,6 +64,8 @@ export function EditPanel({ document, onSaved }: Props) {
   useEffect(() => {
     setValues(Object.fromEntries(scalarKeys.map((key) => [key, String(extraction[key] ?? "")])));
     setItems((extraction.items ?? []).map((item) => ({ ...item })));
+    setTables(structuredClone(extraction.tables ?? []));
+    setOtherFields(Object.entries(extraction.other_fields ?? {}));
     setError(null);
     setSaved(false);
   }, [document?.document_id, document?.updated_at]);
@@ -84,6 +90,14 @@ export function EditPanel({ document, onSaved }: Props) {
     setError(null);
     try {
       const fields: Partial<Extraction> = {};
+      const labels = otherFields.map(([key]) => key.trim());
+      if (labels.some((key) => !key) || new Set(labels).size !== labels.length) {
+        setError("Nhãn trường bổ sung phải có nội dung và không trùng nhau.");
+        return;
+      }
+      const extra = Object.fromEntries(otherFields.map(([, value], index) => [labels[index], value]));
+      if (JSON.stringify(extra) !== JSON.stringify(extraction.other_fields ?? {})) fields.other_fields = extra;
+      if (JSON.stringify(tables) !== JSON.stringify(extraction.tables ?? [])) fields.tables = tables;
       for (const key of scalarKeys) {
         const raw = values[key];
         const next = LA_SO.has(key) ? parseNumber(raw) : raw;
@@ -110,6 +124,7 @@ export function EditPanel({ document, onSaved }: Props) {
 
   return (
     <div className="space-y-4 p-6">
+      <ValidationFlags validation={document.validation} />
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-slate-700">Sửa: {document.file_name}</h3>
         {(document.edited_fields?.length ?? 0) > 0 && (
@@ -155,6 +170,32 @@ export function EditPanel({ document, onSaved }: Props) {
         })}
       </div>
 
+      <section className="space-y-2">
+        <h3 className="font-semibold">Trường bổ sung theo chứng từ</h3>
+        {otherFields.map(([key, value], index) => (
+          <div key={index} className="flex gap-2">
+            <input aria-label={`Nhãn trường ${index + 1}`} value={key} onChange={(e) => setOtherFields((prev) => prev.map((entry, i) => i === index ? [e.target.value, entry[1]] : entry))} className="w-1/3 rounded border p-2" />
+            <textarea aria-label={`Giá trị trường ${index + 1}`} value={value} onChange={(e) => setOtherFields((prev) => prev.map((entry, i) => i === index ? [entry[0], e.target.value] : entry))} className="flex-1 rounded border p-2" />
+            <button onClick={() => setOtherFields((prev) => prev.filter((_, i) => i !== index))}>Bỏ trường</button>
+          </div>
+        ))}
+        <button onClick={() => setOtherFields((prev) => [...prev, ["", ""]])} className="text-sky-700">+ Thêm trường</button>
+      </section>
+      {tables.map((table, ti) => (
+        <div key={ti} className="overflow-auto">
+          <h3 className="font-semibold">Bảng {ti + 1}</h3>
+          <table className="w-full text-sm">
+            <thead><tr>{table.columns.map((column) => <th key={column.header} className="border p-2">{column.header}</th>)}</tr></thead>
+            <tbody>{table.rows.map((row, ri) => <tr key={ri}>{table.columns.map((column) => (
+              <td key={column.header} className="border p-1">
+                <input aria-label={`Bảng ${ti + 1}, dòng ${ri + 1}, ${column.header}`} value={row[column.header] ?? ""} readOnly={!column.role}
+                  onChange={(e) => setTables((prev) => prev.map((t, i) => i === ti ? { ...t, rows: t.rows.map((r, j) => j === ri ? { ...r, [column.header]: e.target.value === "" ? null : e.target.value } : r) } : t))}
+                  className="w-full min-w-24 rounded p-1 read-only:bg-slate-100" />
+              </td>
+            ))}</tr>)}</tbody>
+          </table>
+        </div>
+      ))}
       {items.length > 0 && (
         <div>
           <div className="mb-1 text-sm font-medium text-slate-700">Mặt hàng</div>
@@ -205,18 +246,18 @@ export function EditPanel({ document, onSaved }: Props) {
       )}
       {saved && !error && (
         <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          Đã lưu và đối soát lại — xem tab Cảnh báo.
+          Đã lưu. Kết quả đối soát cũ đã lỗi thời — bấm Đối chiếu lại.
         </p>
       )}
 
       <div className="flex items-center justify-between border-t border-slate-200 pt-4">
-        <span className="text-sm text-slate-500">Lưu xong hệ thống tự đối soát lại</span>
+        <span className="text-sm text-slate-500">Lưu xong, bấm Đối chiếu lại ở bên trái để cập nhật cảnh báo.</span>
         <button
           onClick={save}
           disabled={saving}
           className="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
         >
-          {saving ? "Đang lưu…" : "Lưu & đối soát"}
+          {saving ? "Đang lưu…" : "Lưu"}
         </button>
       </div>
     </div>

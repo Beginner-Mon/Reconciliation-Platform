@@ -54,6 +54,7 @@ def _audit_decision(
     force: bool,
     force_edited: bool,
     engine: str,
+    user: str,
 ) -> None:
     """Ghi lại quyết định của /process — kể cả khi nó quyết định KHÔNG làm gì.
 
@@ -75,10 +76,12 @@ def _audit_decision(
                 {"document_id": s["document_id"], "reason": s["reason"]} for s in skipped
             ],
         },
+        actor=user,
+        source="api",
     )
 
 
-def _audit_overwrites(project_id: str, run_id: str, targets: list[dict]) -> None:
+def _audit_overwrites(project_id: str, run_id: str, targets: list[dict], user: str | None = None) -> None:
     """Document có `edited_fields` mà vẫn lọt vào targets = force_edited đã bật.
 
     Ghi riêng từng document vì đây là thao tác PHÁ HUỶ duy nhất trong hệ thống:
@@ -91,13 +94,15 @@ def _audit_overwrites(project_id: str, run_id: str, targets: list[dict]) -> None
         log_edit_overwritten(
             document["document_id"],
             {
-                "project_id": project_id,
                 "run_id": run_id,
                 "file_name": document.get("file_name"),
                 "edited_fields": list(edited_fields),
                 "edited_by": document.get("edited_by"),
                 "edited_at": document.get("edited_at"),
             },
+            actor=user,
+            source="api",
+            project_id=project_id,
         )
 
 
@@ -149,7 +154,7 @@ def _verify_uploaded(document: dict) -> dict:
     return head
 
 
-def process_project(params: dict, body: dict) -> dict:
+def process_project(params: dict, body: dict, user: str) -> dict:
     project_id = params["project_id"]
     must_get_project(project_id)
 
@@ -220,7 +225,7 @@ def process_project(params: dict, body: dict) -> dict:
     targets = [document for document, _ in verified]
 
     if not targets:
-        _audit_decision(project_id, None, targets, skipped, force, force_edited, engine)
+        _audit_decision(project_id, None, targets, skipped, force, force_edited, engine, user)
         record = invoke_reconcile(project_id)
         return json_response(
             {
@@ -257,8 +262,8 @@ def process_project(params: dict, body: dict) -> dict:
 
     # Ghi vết TRƯỚC khi worker chạy: nếu run hỏng giữa chừng thì audit vẫn cho
     # biết đã định làm gì, đối chiếu với status FAILED của run là ra.
-    _audit_decision(project_id, run_id, targets, skipped, force, force_edited, engine)
-    _audit_overwrites(project_id, run_id, targets)
+    _audit_decision(project_id, run_id, targets, skipped, force, force_edited, engine, user)
+    _audit_overwrites(project_id, run_id, targets, user)
 
     for document, head in verified:
         update_document(

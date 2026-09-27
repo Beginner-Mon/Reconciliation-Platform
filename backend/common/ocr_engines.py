@@ -5,7 +5,7 @@ Trước file này, cùng một thông tin bị khai lại ở bốn chỗ rời
 (evaluation/flows.py) và `ENGINE_LABEL` (evaluation/inspect_ocr.py). Thêm một
 engine là phải sửa đúng bốn chỗ, và bốn chỗ phải khớp nhau.
 
-Gõ lệch một chỗ thì `audit_log` ghi sai tiền. Đã xảy ra rồi — §5 CLAUDE.md:
+Gõ lệch một chỗ thì dòng audit ghi sai tiền. Đã xảy ra rồi — §5 CLAUDE.md:
 "ước tính chi phí lệch 20 lần vì lấy đơn giá Form Parser cho Document OCR".
 
 ĐƠN GIÁ (USD/trang), kiểm tra 2026-09-04:
@@ -14,7 +14,8 @@ Gõ lệch một chỗ thì `audit_log` ghi sai tiền. Đã xảy ra rồi — 
   Textract     https://aws.amazon.com/textract/pricing  (us-west-2, ≤1M trang/tháng)
     DetectDocumentText $0,0015
     AnalyzeDocument FORMS $0,05 + TABLES $0,015 = $0,065; LAYOUT miễn phí kèm TABLES
-  CẦN KIỂM LẠI cho ap-southeast-1 — giá Textract khác nhau theo region.
+  Triển khai ở us-east-1. Giá Textract KHÁC NHAU THEO REGION — đổi vùng thì
+  kiểm lại bảng giá, nếu không dòng audit ghi sai tiền.
 
 CẢNH BÁO NGHIỆP VỤ: Textract KHÔNG hỗ trợ tiếng Việt (chỉ English, French,
 German, Italian, Portuguese, Spanish). Document AI đo được 99,5% dấu tiếng Việt
@@ -124,7 +125,7 @@ def resolve(name: str) -> dict:
     """Tên sai thì NỔ NGAY kèm danh sách tên đúng.
 
     Im lặng rơi về engine mặc định là kiểu hỏng tệ nhất: hệ thống chạy đúng,
-    tính sai tiền, và audit_log ghi một engine thật ra không hề chạy.
+    tính sai tiền, và dòng audit ghi một engine thật ra không hề chạy.
     """
     spec = ENGINES.get(name)
     if spec is None:

@@ -2,35 +2,84 @@ import json
 import os
 import time
 
-
 from .errors import RateLimitError
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+_gemini_api_key_cache = None
+
+
+def get_gemini_api_key() -> str:
+    """Key Gemini dùng cho cả 2 chỗ gọi extract.
+
+    Thứ tự: `GEMINI_API_KEY` trong env (devserver, evaluation) → nếu không có
+    thì đọc secret tên `GEMINI_API_KEY_SECRET` (Lambda prod) và cache trong
+    tiến trình. Cả hai không có thì `RuntimeError` như cũ.
+    """
+    global _gemini_api_key_cache
+    if _gemini_api_key_cache:
+        return _gemini_api_key_cache
+    key = os.environ.get("GEMINI_API_KEY")
+    if key:
+        _gemini_api_key_cache = key
+        return key
+    secret_name = os.environ.get("GEMINI_API_KEY_SECRET", "")
+    if secret_name:
+        import boto3
+
+        response = boto3.client("secretsmanager").get_secret_value(SecretId=secret_name)
+        _gemini_api_key_cache = response["SecretString"]
+        return _gemini_api_key_cache
+    raise RuntimeError("Thiếu GEMINI_API_KEY")
+
+
 DOCAI_PROJECT = os.environ.get("DOCAI_PROJECT", "")
 DOCAI_LOCATION = os.environ.get("DOCAI_LOCATION", "us")
 DOCAI_PROCESSOR_ID = os.environ.get("DOCAI_PROCESSOR_ID", "")
 OCR_MIME_TYPE = os.environ.get("OCR_MIME_TYPE", "application/pdf")
 
-PROMPT_TEMPLATE = """Bạn là hệ thống trích xuất chứng từ doanh nghiệp tiếng Việt.
-Tài liệu thuộc một trong các loại: <<DOC_TYPES>>.
-Trả về DUY NHẤT một JSON object, không kèm text khác, đúng cấu trúc:
+PROMPT_TEMPLATE = """Bạn là hệ thống trích xuất chứng từ thương mại tiếng Việt.
+Trích thành MỘT JSON duy nhất, không kèm text khác:
 
 {
-  "document_type": <<DOC_TYPE_ENUM>>,
-  "data": { ... các trường theo loại ... },
-  "confidence": { "tên_trường": 0.0-1.0 }
+  "document_type": "<<DOC_TYPE_ENUM>>",
+  "data": {
+    "document_type": "purchase_order|quotation|invoice|acceptance_record|delivery_note|contract|other",
+    "role": "order|offer|delivery|billing|other",
+    "doc_number": "str | null",
+    "doc_date": "YYYY-MM-DD | null",
+    "order_reference": "str | null",
+    "seller": "str | null",
+    "seller_tax_code": "str | null",
+    "buyer": "str | null",
+    "buyer_tax_code": "str | null",
+    "currency": "str | null",
+    "subtotal": "int | null",
+    "discount_amount": "int | null",
+    "tax_amount": "int | null",
+    "total_amount": "int | null",
+    "other_fields": {"nhãn nguyên văn": "str"},
+    "tables": [
+      {
+        "columns": [{"header": "tên cột NGUYÊN VĂN", "role": "item_name|quantity|unit|unit_price|amount|null"}],
+        "rows": [{"header": "str|int|float|null"}]
+      }
+    ]
+  },
+  "confidence": {"tên_trường": 0.0-1.0}
 }
+
+Quy tắc:
+- document_type là nhãn AI gán, role là vai trò: order(đặt hàng), offer(báo giá), delivery(giao/ nghiệm thu), billing(thanh toán), other(khác). Loại mới không cần sửa code.
+- Trích TOÀN BỘ bảng giữ nguyên tên cột, gán role cho từng cột. Bảng muốn so phải có cột role=item_name và quantity.
+- Số tiền int VND, quantity float (m², kg), ngày YYYY-MM-DD, MST giữ nguyên, tên hàng ≤500 ký tự.
+- Trường không có thì bỏ qua, không bịa; confidence <0.8 nếu không chắc.
+- Trích TOÀN BỘ nhãn–giá trị ngoài bảng, phần tổng kết và ghi chú. Trường chưa có trong schema đưa vào other_fields, giữ nhãn và giá trị nguyên văn, kể cả phí/điều chỉnh chưa biết.
+- Chỉ trích dữ liệu có trên chứng từ. Không tự tính bù, sửa số, hoặc bỏ dữ liệu vì công thức không khớp.
 
 <<DOC_TYPE_FIELDS>>
 
-Quy tắc:
-- Số tiền trả về dạng int (VND không có phần lẻ); quantity là int.
-- Ngày theo định dạng YYYY-MM-DD.
-- Trường không tìm thấy trong tài liệu thì bỏ qua (không đưa vào data).
-- Không bịa dữ liệu: nếu không chắc, để confidence thấp hơn 0.8.
-- Đọc kỹ bảng line items nếu có.
-
-Nội dung OCR của tài liệu:
+Nội dung OCR:
 <<OCR_TEXT>>
 """
 
@@ -334,9 +383,7 @@ def _build_ocr_text(ocr_json: dict) -> str:
 def extract_with_gemini(ocr_json: dict) -> dict:
     from google import genai
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Thiếu GEMINI_API_KEY")
+    api_key = get_gemini_api_key()
 
     client = genai.Client(api_key=api_key)
     prompt = build_extraction_prompt(_build_ocr_text(ocr_json))
@@ -369,7 +416,7 @@ GEMINI_OUTPUT_USD_PER_1M = float(os.environ.get("GEMINI_OUTPUT_USD_PER_1M", "2.5
 # Giá theo processor, $/trang:
 #   Enterprise Document OCR $1.50/1000 | Layout Parser $10/1000
 #   Form Parser $30/1000    | Custom Extractor $30/1000
-# Đổi processor thì PHẢI đổi biến này, nếu không chi phí trong audit_log sẽ sai.
+# Đổi processor thì PHẢI đổi biến này, nếu không chi phí trong dòng audit sẽ sai.
 DOCAI_USD_PER_PAGE = float(os.environ.get("DOCAI_USD_PER_PAGE", "0.030"))
 DOCAI_OCR_USD_PER_PAGE = float(os.environ.get("DOCAI_OCR_USD_PER_PAGE", "0.0015"))
 
@@ -383,9 +430,7 @@ def extract_with_gemini_pdf(content: bytes, mime_type: str = "application/pdf") 
     from google import genai
     from google.genai import types
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Thiếu GEMINI_API_KEY")
+    api_key = get_gemini_api_key()
 
     client = genai.Client(api_key=api_key)
     prompt = build_extraction_prompt("(đọc trực tiếp từ file đính kèm)")

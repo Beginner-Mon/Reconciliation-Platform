@@ -17,7 +17,9 @@ import pathlib
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    # line_buffering: chạy nền với stdout ghi ra file thì banner, log request và
+    # dòng audit phải hiện ngay, không nằm chờ trong bộ đệm.
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 DEFAULTS = {
     "AWS_DEFAULT_REGION": "ap-southeast-1",
@@ -27,7 +29,6 @@ DEFAULTS = {
     "DOCUMENTS_TABLE": "dev-documents",
     "RUNS_TABLE": "dev-processing-runs",
     "RECONCILIATIONS_TABLE": "dev-reconciliations",
-    "AUDIT_LOG_TABLE": "dev-audit-log",
     "DOCUMENTS_BUCKET": "dev-documents",
     "STATE_MACHINE_ARN": "arn:aws:states:local:000000000000:stateMachine:devserver",
 }

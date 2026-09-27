@@ -1,4 +1,4 @@
-# Dựng MỘT gói riêng cho MỖI Lambda.
+﻿# Dựng MỘT gói riêng cho MỖI Lambda.
 #
 # Bảng gói nằm ở backend/packaging.py — một nguồn duy nhất, và
 # backend/tests/test_packaging.py khoá nó khớp với local.workers +
@@ -14,6 +14,7 @@
 # common/ai_clients.py) vì import module handler thôi không phát hiện được.
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $infra     = Split-Path -Parent $PSScriptRoot
@@ -105,10 +106,37 @@ if thieu:
     # Dung .NET chu khong Compress-Archive: cmdlet do cham, va tren PS 5.1 hay
     # dinh loi "file is being used by another process" khi antivirus dang quet
     # dong file vua chep ra.
+    #
+    # KHONG dung ZipFile::CreateFromDirectory: tren PS 5.1 (.NET Framework) no
+    # ghi duong dan bang dau '\' (common\audit.py). Lambda chay Linux, '\' khong
+    # phai dau phan cach thu muc -> khong co thu muc `workers/` -> ca 10 function
+    # chet luc cold start voi "No module named 'workers'". terraform apply van
+    # bao thanh cong. Tu tao tung entry voi dau '/'.
     $zip = Join-Path $artifacts "$ten.zip"
     if (Test-Path $zip) { Remove-Item -Force $zip }
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+    $goc = (Resolve-Path $stage).Path.TrimEnd('\') + '\'
+    $luong = [System.IO.File]::Open($zip, [System.IO.FileMode]::CreateNew)
+    $kho = New-Object System.IO.Compression.ZipArchive($luong, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        Get-ChildItem -Path $stage -Recurse -File | ForEach-Object {
+            $tenTrongZip = $_.FullName.Substring($goc.Length).Replace('\', '/')
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $kho, $_.FullName, $tenTrongZip, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    } finally {
+        $kho.Dispose()
+        $luong.Dispose()
+    }
+
+    # Kiem lai CHINH file zip, khong kiem thu muc build: loi o tren chi lo ra
+    # trong zip, con `phai_co_module` phia tren van xanh.
+    $doc = [System.IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $sai = @($doc.Entries | Where-Object { $_.FullName.Contains('\') }).Count
+    } finally {
+        $doc.Dispose()
+    }
+    if ($sai -gt 0) { throw "goi '$ten' co $sai entry dung dau '\' - Lambda (Linux) se khong import duoc" }
 
     $mb = [Math]::Round((Get-Item $zip).Length / 1MB, 1)
     $tong += $mb

@@ -106,6 +106,11 @@ PACKAGES = {
         "requires": ["pydantic>=2.7"],
         "phai_co_module": ["api.handler", "pydantic"],
     },
+    "api-anchor": {
+        "modules": ["api", "common", "core", "schemas"],
+        "requires": ["pydantic>=2.7"],
+        "phai_co_module": ["api.handler", "pydantic"],
+    },
 }
 
 # Mọi tên module hợp lệ. Mỗi gói khai `modules` là tập con của danh sách này —

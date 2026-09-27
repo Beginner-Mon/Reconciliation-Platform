@@ -1,0 +1,7 @@
+# Copy thành backend.hcl rồi điền bucket từ output của infra/bootstrap.
+# backend.hcl KHÔNG được commit (đã gitignore).
+bucket       = "recon-tfstate-<account_id>"
+key          = "reconciliation-platform/prod/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true

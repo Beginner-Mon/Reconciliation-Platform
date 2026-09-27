@@ -31,6 +31,11 @@ export const DOCUMENT_TYPE_LABEL: Record<DocumentType, string> = {
   invoice: "Hóa đơn",
   acceptance_record: "Biên bản nghiệm thu",
   unknown: "Chưa phân loại",
+  document: "Chứng từ",
+  quotation: "Báo giá",
+  delivery_note: "Phiếu giao hàng",
+  contract: "Hợp đồng",
+  other: "Khác",
 };
 
 export const STEP_LABEL: Record<Step, string> = {
@@ -88,7 +93,7 @@ export const LOW_CONFIDENCE = 0.75;
  *  `APP_ENGINES`. Thêm/đổi tên engine mà quên chỗ này thì test đỏ.
  *
  *  Không hiện đơn giá ở đây: giá nằm trong registry của server và cũng là giá
- *  ghi vào audit_log. Chép sang đây thì lệch một lần là giao diện nói dối.
+ *  ghi vào dòng audit. Chép sang đây thì lệch một lần là giao diện nói dối.
  */
 export const OCR_ENGINES = [
   {

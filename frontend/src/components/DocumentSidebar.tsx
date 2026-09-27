@@ -3,16 +3,15 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
-  Circle,
   Loader2,
   Play,
   Plus,
   RotateCw,
-  X,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_OCR_ENGINE, OCR_ENGINES } from "../format";
-import type { DocumentView } from "../types";
+import type { DocumentStatus, DocumentView } from "../types";
 
 /** Sidebar: danh sách chứng từ có chọn nhiều, và HAI hành động của hệ thống.
  *
@@ -25,11 +24,33 @@ import type { DocumentView } from "../types";
  *  Nhờ vậy chạy 1, chạy 3 hay chạy hết đều là cùng một thao tác.
  */
 
-function StatusIcon({ document }: { document: DocumentView }) {
-  if (document.status === "FAILED") return <X size={16} className="text-red-600" />;
-  if (document.status === "VALIDATED") return <Check size={16} className="text-emerald-600" />;
-  if (document.status === "PENDING") return <Circle size={14} className="text-slate-400" />;
-  return <Loader2 size={16} className="animate-spin text-sky-600" />;
+/** Tag trạng thái thay cho dấu ✓/✗/○ — biểu tượng trơn khó hiểu.
+ *  Giữ đúng mã tiếng Anh vì nó trùng với API, audit và tài liệu (dễ đối chiếu
+ *  khi debug); nghĩa tiếng Việt nằm ở tooltip.
+ *  `Record<DocumentStatus, …>` bắt buộc khai đủ mọi trạng thái — thêm trạng
+ *  thái mới ở types.ts mà quên chỗ này thì typecheck đỏ. */
+const TAG: Record<DocumentStatus, { nghia: string; mau: string; dangChay?: boolean }> = {
+  PENDING: { nghia: "Mới tải lên, chưa xử lý", mau: "border-slate-200 bg-slate-50 text-slate-500" },
+  PROCESSING: { nghia: "Đang xử lý", mau: "border-sky-200 bg-sky-50 text-sky-700", dangChay: true },
+  OCR_DONE: { nghia: "Đã đọc chữ, chờ trích xuất", mau: "border-sky-200 bg-sky-50 text-sky-700", dangChay: true },
+  EXTRACTED: { nghia: "Đã trích xuất, chờ kiểm tra", mau: "border-sky-200 bg-sky-50 text-sky-700", dangChay: true },
+  VALIDATED: { nghia: "Đã xử lý xong và qua kiểm tra", mau: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+  FAILED: { nghia: "Lỗi ở một bước — xem tab Trích xuất", mau: "border-red-200 bg-red-50 text-red-700" },
+};
+
+function StatusTag({ document }: { document: DocumentView }) {
+  const tag = TAG[document.status];
+  // FAILED: tooltip hiện đúng lý do lỗi, không chỉ câu chung chung.
+  const tooltip = document.status === "FAILED" && document.error ? document.error : tag.nghia;
+  return (
+    <span
+      title={tooltip}
+      className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-px text-[10px] font-semibold tracking-wide ${tag.mau}`}
+    >
+      {tag.dangChay && <Loader2 size={10} className="animate-spin" />}
+      {document.status}
+    </span>
+  );
 }
 
 interface Props {
@@ -47,6 +68,7 @@ interface Props {
   onUpload: (files: FileList) => void;
   onProcess: (engine: string) => void;
   onReconcile: () => void;
+  onDelete: (document: DocumentView) => void;
 }
 
 export function DocumentSidebar({
@@ -64,6 +86,7 @@ export function DocumentSidebar({
   onUpload,
   onProcess,
   onReconcile,
+  onDelete,
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [engine, setEngine] = useState<string>(DEFAULT_OCR_ENGINE);
@@ -161,21 +184,28 @@ export function DocumentSidebar({
                     dangXem ? "text-slate-900" : "text-slate-700"
                   }`}
                 >
-                  <span className="flex w-4 shrink-0 justify-center">
-                    <StatusIcon document={document} />
-                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate" title={document.file_name}>
                       {document.file_name}
                     </span>
-                    {/* Engine đã chạy cho CHỨNG TỪ NÀY — hai chứng từ trong cùng
-                        project có thể khác nhau, nên phải hiện ở từng dòng. */}
-                    {document.ocr_engine && (
-                      <span className="mt-0.5 block truncate text-xs text-slate-400">
-                        {document.ocr_engine}
-                      </span>
-                    )}
+                    <span className="mt-1 flex min-w-0 items-center gap-1.5">
+                      <StatusTag document={document} />
+                      {document.ocr_engine && (
+                        <span className="truncate text-xs text-slate-400">
+                          {document.ocr_engine}
+                        </span>
+                      )}
+                    </span>
                   </span>
+                </button>
+                <button
+                  onClick={() => onDelete(document)}
+                  disabled={busy || running}
+                  title={`Xoá ${document.file_name}`}
+                  aria-label={`Xoá ${document.file_name}`}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                >
+                  <Trash2 size={14} />
                 </button>
               </div>
             );

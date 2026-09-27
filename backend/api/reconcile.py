@@ -1,3 +1,4 @@
+from common.audit import log_reconcile_run
 from common.dynamodb import RECONCILIATIONS_TABLE, get_item, query_documents_by_project
 from common.errors import NotFound
 from common.s3 import read_json
@@ -15,7 +16,7 @@ def must_get_reconciliation(reconciliation_id: str) -> dict:
     return record
 
 
-def reconcile_project(params: dict, body: dict) -> dict:
+def reconcile_project(params: dict, body: dict, user: str) -> dict:
     """Chỉ đối chiếu — KHÔNG gọi AI, không tốn tiền, bấm lại thoải mái.
 
     Gọi sang Lambda đối chiếu chứ không tự chạy: cả hệ thống chỉ có MỘT chỗ chạy
@@ -25,12 +26,18 @@ def reconcile_project(params: dict, body: dict) -> dict:
     project_id = params["project_id"]
     must_get_project(project_id)
     record = invoke_reconcile(project_id)
+    log_reconcile_run(
+        project_id,
+        {"reconciliation_id": record["reconciliation_id"]},
+        actor=user,
+        source="api",
+    )
     return json_response(
         reconciliation_view(record, query_documents_by_project(project_id))
     )
 
 
-def get_reconciliation(params: dict, body: dict) -> dict:
+def get_reconciliation(params: dict, body: dict, user: str) -> dict:
     record = must_get_reconciliation(params["reconciliation_id"])
     detail = read_json(record["s3_key"])
     # `is_stale` ở đây nữa chứ không chỉ ở GET /projects/{id}: chặn duyệt dựa

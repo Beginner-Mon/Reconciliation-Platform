@@ -203,9 +203,10 @@ def install() -> dict:
     # Vá theo TÊN ĐÃ BIND trong từng module gọi, không vá `common.reconcile_client`
     # — các module dùng `from ... import invoke_reconcile` nên mỗi module giữ một
     # tham chiếu riêng.
+    import api.documents as documents_module
     import api.reconcile as reconcile_module
 
-    for module in (reconcile_module, process_module):
+    for module in (reconcile_module, process_module, documents_module):
         module.invoke_reconcile = workers.reconcile.run_reconciliation
 
     return plan

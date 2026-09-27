@@ -16,9 +16,17 @@ resource "aws_s3_bucket_cors_configuration" "documents" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["POST", "PUT", "GET", "HEAD"]
-    allowed_origins = var.frontend_origins
+    allowed_origins = local.cors_origins
     expose_headers  = ["ETag"]
     max_age_seconds = 3000
+  }
+}
+
+resource "aws_s3_bucket_versioning" "documents" {
+  bucket = aws_s3_bucket.documents.id
+
+  versioning_configuration {
+    status = "Enabled"
   }
 }
 
@@ -35,6 +43,17 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
       days_after_initiation = 3
     }
   }
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
 }
 
 resource "aws_dynamodb_table" "projects" {
@@ -45,6 +64,10 @@ resource "aws_dynamodb_table" "projects" {
   attribute {
     name = "project_id"
     type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
   }
 }
 
@@ -79,6 +102,10 @@ resource "aws_dynamodb_table" "documents" {
     hash_key        = "po_number"
     projection_type = "ALL"
   }
+
+  point_in_time_recovery {
+    enabled = true
+  }
 }
 
 resource "aws_dynamodb_table" "processing_runs" {
@@ -89,6 +116,10 @@ resource "aws_dynamodb_table" "processing_runs" {
   attribute {
     name = "run_id"
     type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
   }
 }
 
@@ -101,22 +132,9 @@ resource "aws_dynamodb_table" "reconciliations" {
     name = "reconciliation_id"
     type = "S"
   }
-}
 
-resource "aws_dynamodb_table" "audit_log" {
-  name         = "${var.app_name}-audit-log-${var.env}"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "entity_id"
-  range_key    = "timestamp"
-
-  attribute {
-    name = "entity_id"
-    type = "S"
-  }
-
-  attribute {
-    name = "timestamp"
-    type = "S"
+  point_in_time_recovery {
+    enabled = true
   }
 }
 
@@ -126,7 +144,6 @@ locals {
     aws_dynamodb_table.documents.arn,
     aws_dynamodb_table.processing_runs.arn,
     aws_dynamodb_table.reconciliations.arn,
-    aws_dynamodb_table.audit_log.arn,
   ]
 
   table_indexes = ["${aws_dynamodb_table.documents.arn}/index/*"]
@@ -178,9 +195,12 @@ resource "aws_iam_policy" "lambda_policy" {
         Resource = concat(local.tables, local.table_indexes)
       },
       {
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [aws_secretsmanager_secret.google_sa_key.arn]
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_secretsmanager_secret.google_sa_key.arn,
+          aws_secretsmanager_secret.gemini_api_key.arn,
+        ]
       },
       # Engine OCR thay thế (var.ocr_engine = "textract" / "textract-analyze").
       # Textract KHÔNG nhận Resource cụ thể cho mấy action này — chỉ "*".
@@ -220,7 +240,6 @@ locals {
     DOCUMENTS_TABLE           = aws_dynamodb_table.documents.name
     RUNS_TABLE                = aws_dynamodb_table.processing_runs.name
     RECONCILIATIONS_TABLE     = aws_dynamodb_table.reconciliations.name
-    AUDIT_LOG_TABLE           = aws_dynamodb_table.audit_log.name
     DOCUMENTS_PROJECT_INDEX   = "project_id-index"
     DOCUMENTS_PO_NUMBER_INDEX = "po_number-index"
     DOCUMENTS_BUCKET          = aws_s3_bucket.documents.bucket
@@ -233,7 +252,7 @@ locals {
     DOCAI_OCR_PROCESSOR_ID = var.gcp_docai_ocr_processor_id
     DOCAI_PROCESSOR_ID     = var.gcp_docai_processor_id
     GEMINI_MODEL           = var.gemini_model
-    GEMINI_API_KEY         = var.gemini_api_key
+    GEMINI_API_KEY_SECRET  = aws_secretsmanager_secret.gemini_api_key.name
     GOOGLE_SA_KEY_SECRET   = aws_secretsmanager_secret.google_sa_key.name
     # Engine OCR: tên tra trong backend/common/ocr_engines.py — hàm gọi, đơn
     # giá và nhãn audit đều lấy từ đó nên không thể lệch nhau.
@@ -302,11 +321,12 @@ locals {
       handler  = "api.handler.documents_handler"
       timeout  = 30
       memory   = 512
-      dynamodb = ["GetItem", "Query", "PutItem", "UpdateItem"]
+      dynamodb = ["GetItem", "Query", "PutItem", "UpdateItem", "DeleteItem"]
       # PutObject: presigned POST ký bằng quyền của chính role này.
-      s3               = ["GetObject", "PutObject"]
+      # DeleteObject: xoá chứng từ (P1) — bucket có versioning nên tạo delete marker, khôi phục 30 ngày.
+      s3               = ["GetObject", "PutObject", "DeleteObject"]
       sfn              = false
-      invoke_reconcile = false
+      invoke_reconcile = true
     }
     review = {
       handler  = "api.handler.review_handler"
@@ -327,6 +347,15 @@ locals {
       # KHÔNG còn PutObject: chỉ head_object để kiểm file đã upload chưa.
       s3               = ["GetObject"]
       sfn              = true
+      invoke_reconcile = true
+    }
+    anchor = {
+      handler          = "api.handler.anchor_handler"
+      timeout          = 30
+      memory           = 512
+      dynamodb         = ["GetItem", "Query", "UpdateItem"]
+      s3               = ["GetObject"]
+      sfn              = false
       invoke_reconcile = true
     }
   }
@@ -431,6 +460,181 @@ resource "aws_iam_role_policy_attachment" "api" {
   policy_arn = aws_iam_policy.api[each.key].arn
 }
 
+locals {
+  lambda_function_names = merge(
+    { for k in keys(local.workers) : k => "${var.app_name}-${k}-${var.env}" },
+    { for k in keys(local.api_functions) : "api-${k}" => "${var.app_name}-api-${k}-${var.env}" },
+  )
+}
+
+resource "aws_cloudwatch_log_group" "lambda" {
+  for_each          = local.lambda_function_names
+  name              = "/aws/lambda/${each.value}"
+  retention_in_days = var.log_retention_days
+}
+
+locals {
+  audit_sources = join(" | ", [
+    for ten in values(local.lambda_function_names) : "SOURCE '/aws/lambda/${ten}'"
+  ])
+}
+
+resource "aws_cloudwatch_dashboard" "poc" {
+  dashboard_name = "${var.app_name}-${var.env}"
+
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type   = "log"
+        x      = 0
+        y      = 0
+        width  = 16
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Nhật ký audit — ai làm gì"
+          view   = "table"
+          query  = "${local.audit_sources} | fields @timestamp, actor, action, project_id, entity_id\n| filter audit = 1\n| sort @timestamp desc\n| limit 100"
+        }
+      },
+      {
+        type   = "log"
+        x      = 16
+        y      = 0
+        width  = 8
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Đếm theo hành động"
+          view   = "bar"
+          query  = "${local.audit_sources} | filter audit = 1\n| stats count() by action"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 8
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Chi phí AI mỗi ngày (USD)"
+          view   = "timeSeries"
+          stat   = "Sum"
+          period = 86400
+          metrics = [
+            ["Recon/AI", "AiCostUsd", "Service", "recon"],
+          ]
+          annotations = {
+            horizontal = [{ value = 1, label = "Ngưỡng $1/ngày" }]
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 8
+        y      = 6
+        width  = 8
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Số lần AI bị 429"
+          view   = "timeSeries"
+          stat   = "Sum"
+          period = 86400
+          metrics = [
+            ["Recon/AI", "AiRateLimited", "Service", "recon"],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 16
+        y      = 6
+        width  = 8
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Latency AI p90"
+          view   = "timeSeries"
+          stat   = "p90"
+          period = 86400
+          metrics = [
+            ["Recon/AI", "AiLatencyMs", "Service", "recon"],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Step Functions chạy xong / lỗi"
+          view   = "timeSeries"
+          stat   = "Sum"
+          period = 86400
+          metrics = [
+            ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", aws_sfn_state_machine.process.arn],
+            ["AWS/States", "ExecutionsFailed", "StateMachineArn", aws_sfn_state_machine.process.arn],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "API Gateway 5xx + Latency"
+          view   = "timeSeries"
+          stat   = "Sum"
+          period = 300
+          metrics = [
+            ["AWS/ApiGateway", "5xx", "ApiId", aws_apigatewayv2_api.api.id],
+            ["AWS/ApiGateway", "Latency", "ApiId", aws_apigatewayv2_api.api.id, { stat = "Average" }],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 18
+        width  = 16
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Lambda Errors theo function"
+          view   = "timeSeries"
+          stat   = "Sum"
+          period = 300
+          metrics = [
+            for ten in values(local.lambda_function_names) :
+            ["AWS/Lambda", "Errors", "FunctionName", ten]
+          ]
+        }
+      },
+      {
+        type   = "log"
+        x      = 16
+        y      = 18
+        width  = 8
+        height = 6
+        properties = {
+          region = var.aws_region
+          title  = "Log lỗi gần nhất"
+          view   = "table"
+          query  = "${local.audit_sources} | filter @message like /ERROR/\n| sort @timestamp desc\n| limit 100"
+        }
+      },
+    ]
+  })
+}
+
 resource "aws_lambda_function" "api" {
   for_each = local.api_functions
 
@@ -514,14 +718,76 @@ resource "aws_secretsmanager_secret_version" "google_sa_key" {
   secret_string = var.gcp_sa_key_json
 }
 
+resource "aws_secretsmanager_secret" "gemini_api_key" {
+  name = "${var.app_name}-gemini-api-key-${var.env}"
+}
+
+resource "aws_secretsmanager_secret_version" "gemini_api_key" {
+  secret_id     = aws_secretsmanager_secret.gemini_api_key.id
+  secret_string = var.gemini_api_key
+}
+
+resource "aws_cognito_user_pool" "main" {
+  name = "${var.app_name}-users-${var.env}"
+
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+  }
+}
+
+resource "aws_cognito_user_pool_client" "main" {
+  name         = "${var.app_name}-spa-${var.env}"
+  user_pool_id = aws_cognito_user_pool.main.id
+
+  generate_secret               = false
+  explicit_auth_flows           = ["ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+  prevent_user_existence_errors = "ENABLED"
+  supported_identity_providers  = ["COGNITO"]
+  write_attributes              = []
+}
+
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.api.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "${var.app_name}-cognito-${var.env}"
+
+  jwt_configuration {
+    issuer   = "https://${aws_cognito_user_pool.main.endpoint}"
+    audience = [aws_cognito_user_pool_client.main.id]
+  }
+}
+
+resource "aws_amplify_app" "main" {
+  name = "${var.app_name}-${var.env}"
+
+  custom_rule {
+    source = "</^[^.]+$|\\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp)$)([^.]+$)/>"
+    status = "200"
+    target = "/index.html"
+  }
+}
+
+resource "aws_amplify_branch" "main" {
+  app_id      = aws_amplify_app.main.id
+  branch_name = "main"
+
+  enable_auto_build = false
+}
+
+locals {
+  amplify_url  = "https://${aws_amplify_branch.main.branch_name}.${aws_amplify_app.main.id}.amplifyapp.com"
+  cors_origins = concat(var.frontend_origins, [local.amplify_url])
+}
+
 resource "aws_apigatewayv2_api" "api" {
   name          = "${var.app_name}-api-${var.env}"
   protocol_type = "HTTP"
 
   cors_configuration {
-    allow_origins = ["*"]
-    allow_methods = ["GET", "POST", "PATCH", "OPTIONS"]
-    allow_headers = ["content-type"]
+    allow_origins = local.cors_origins
+    allow_methods = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
+    allow_headers = ["content-type", "authorization"]
   }
 }
 
@@ -548,19 +814,23 @@ locals {
     "POST /projects/{project_id}/documents"                  = "documents"
     "GET /projects/{project_id}/documents"                   = "documents"
     "GET /projects/{project_id}/documents/{document_id}/ocr" = "documents"
+    "DELETE /projects/{project_id}/documents/{document_id}"  = "documents"
     "POST /projects/{project_id}/reconcile"                  = "review"
     "PATCH /projects/{project_id}/documents/{document_id}"   = "review"
     "GET /reconciliations/{reconciliation_id}"               = "review"
     "POST /reconciliations/{reconciliation_id}/review"       = "review"
+    "PUT /projects/{project_id}/anchor"                      = "anchor"
     "POST /projects/{project_id}/process"                    = "process"
   }
 }
 
 resource "aws_apigatewayv2_route" "routes" {
-  for_each  = local.api_routes
-  api_id    = aws_apigatewayv2_api.api.id
-  route_key = each.key
-  target    = "integrations/${aws_apigatewayv2_integration.api[each.value].id}"
+  for_each           = local.api_routes
+  api_id             = aws_apigatewayv2_api.api.id
+  route_key          = each.key
+  target             = "integrations/${aws_apigatewayv2_integration.api[each.value].id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_apigatewayv2_stage" "default" {

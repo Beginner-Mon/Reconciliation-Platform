@@ -27,7 +27,7 @@ def _must_get_document(project_id: str, document_id: str) -> dict:
     return document
 
 
-def edit_document(params: dict, body: dict) -> dict:
+def edit_document(params: dict, body: dict, user: str) -> dict:
     project_id = params["project_id"]
     document_id = params["document_id"]
     document = _must_get_document(project_id, document_id)
@@ -48,6 +48,9 @@ def edit_document(params: dict, body: dict) -> dict:
         "valid": result["valid"],
         "schema_errors": result["schema_errors"],
         "rule_errors": result["rule_errors"],
+        "flags": result["flags"],
+        "warnings": result["warnings"],
+        "comparison_incomplete": result["comparison_incomplete"],
     }
 
     edited_fields = sorted(set(document.get("edited_fields") or []) | set(fields))
@@ -58,7 +61,7 @@ def edit_document(params: dict, body: dict) -> dict:
         "validation": validation,
         "edited_fields": edited_fields,
         "edited_at": now_iso(),
-        "edited_by": body.get("reviewer") or "poc-user",
+        "edited_by": user,
         "updated_at": now_iso(),
         "status": "VALIDATED" if result["valid"] else "FAILED",
         "step": "validate",
@@ -67,16 +70,23 @@ def edit_document(params: dict, body: dict) -> dict:
     }
     if extraction.get("po_number"):
         updates["po_number"] = extraction["po_number"]
+    if extraction.get("order_reference"):
+        updates["order_reference"] = extraction["order_reference"]
+        updates["po_number"] = extraction["order_reference"]
+    if extraction.get("doc_number"):
+        updates["doc_number"] = extraction["doc_number"]
 
     update_document(document_id, **updates)
     log_review(
         document_id,
         "REVIEW_EDIT",
         {
-            "reviewer": updates["edited_by"],
             "fields": list(fields),
             "valid": result["valid"],
         },
+        actor=user,
+        source="api",
+        project_id=project_id,
     )
 
     # KHÔNG đối chiếu ở đây. Sửa tay là thao tác REVIEW, không phải thao tác đối
@@ -98,14 +108,14 @@ def edit_document(params: dict, body: dict) -> dict:
 
 # Duyệt và từ chối ghi CÙNG một bảng, CÙNG một shape, khác đúng một enum —
 # không có side effect nào riêng nên một route là đủ. Tách làm hai cũng không
-# thêm gì cho audit: `log_review` đã ghi `decision` vào `audit_log`.
+# thêm gì cho audit: `log_review` đã ghi `decision` vào dòng audit.
 #
 # Tách lại chỉ hợp lý khi duyệt sinh ra hệ quả mà từ chối không có (đẩy sang
 # ERP, gửi thông báo) — lúc đó side effect mới thật sự khác nhau.
 DECISIONS = ("APPROVED", "REJECTED")
 
 
-def review_reconciliation(params: dict, body: dict) -> dict:
+def review_reconciliation(params: dict, body: dict, user: str) -> dict:
     reconciliation_id = params["reconciliation_id"]
 
     # Gộp route thì `decision` thành dữ liệu đầu vào, phải kiểm. Coi mọi thứ
@@ -120,11 +130,12 @@ def review_reconciliation(params: dict, body: dict) -> dict:
     record = must_get_reconciliation(reconciliation_id)
     if record.get("status") != "PENDING_REVIEW":
         raise Conflict(f"Reconciliation đang ở trạng thái {record.get('status')}")
+    if not record.get("document_ids"):
+        raise Conflict("Đợt đối chiếu này không so chứng từ nào — không có gì để duyệt.")
 
-    # Duyệt một kết luận tính TRƯỚC lần sửa cuối là duyệt dữ liệu đã sai. Chặn ở
-    # SERVER chứ không chỉ làm mờ nút trên giao diện — đây là quyết định nghiệp
-    # vụ được ghi vào audit_log, không được phép sai vì một request gọi tay.
-    if da_cu(record, query_documents_by_project(record["project_id"])):
+    from common.dynamodb import PROJECTS_TABLE, get_item as _get_item
+    project = _get_item(PROJECTS_TABLE, {"project_id": record["project_id"]})
+    if da_cu(record, query_documents_by_project(record["project_id"]), project):
         raise Conflict(
             "Có chứng từ được sửa sau lần đối chiếu này. Bấm Đối chiếu lại rồi "
             "hãy duyệt."
@@ -132,7 +143,7 @@ def review_reconciliation(params: dict, body: dict) -> dict:
 
     review = {
         "decision": decision,
-        "reviewer": body.get("reviewer") or "poc-user",
+        "reviewer": user,
         "reviewed_at": now_iso(),
         "comment": body.get("comment"),
     }
@@ -144,6 +155,9 @@ def review_reconciliation(params: dict, body: dict) -> dict:
     log_review(
         record["project_id"],
         "REVIEW_DECISION",
-        {"reconciliation_id": reconciliation_id, **review},
+        {"reconciliation_id": reconciliation_id, "decision": decision, "comment": body.get("comment")},
+        actor=user,
+        source="api",
+        project_id=record["project_id"],
     )
     return json_response({**record, "status": decision, "review": review})

@@ -16,7 +16,7 @@ def get_document(document_id: str) -> dict:
     return document
 
 
-def begin_step(document_id: str, step: str) -> int:
+def begin_step(document_id: str, step: str, project_id: str | None = None) -> int:
     document = get_document(document_id)
     repeated = document.get("step") == step and document.get("step_status") in {"running", "failed"}
     attempt = (document.get("attempt") or 1) + 1 if repeated else 1
@@ -31,11 +31,15 @@ def begin_step(document_id: str, step: str) -> int:
         attempt=attempt,
         error=None,
     )
-    log_pipeline_step(document_id, step, "started", {"attempt": attempt})
+    if project_id is None:
+        project_id = document.get("project_id")
+    log_pipeline_step(
+        document_id, step, "started", {"attempt": attempt}, source="worker", project_id=project_id
+    )
     return attempt
 
 
-def finish_step(document_id: str, step: str, **updates) -> None:
+def finish_step(document_id: str, step: str, project_id: str | None = None, **updates) -> None:
     update_document(
         document_id,
         status=STATUS_AFTER_STEP[step],
@@ -44,10 +48,12 @@ def finish_step(document_id: str, step: str, **updates) -> None:
         updated_at=now_iso(),
         **updates,
     )
-    log_pipeline_step(document_id, step, "done")
+    if project_id is None and "project_id" in updates:
+        project_id = updates.get("project_id")
+    log_pipeline_step(document_id, step, "done", source="worker", project_id=project_id)
 
 
-def fail_step(document_id: str, step: str, error: str) -> None:
+def fail_step(document_id: str, step: str, error: str, project_id: str | None = None) -> None:
     update_document(
         document_id,
         status="FAILED",
@@ -56,4 +62,6 @@ def fail_step(document_id: str, step: str, error: str) -> None:
         updated_at=now_iso(),
         error=error,
     )
-    log_pipeline_step(document_id, step, "failed", {"error": error})
+    log_pipeline_step(
+        document_id, step, "failed", {"error": error}, source="worker", project_id=project_id
+    )

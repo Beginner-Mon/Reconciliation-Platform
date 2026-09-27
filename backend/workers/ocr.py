@@ -49,13 +49,13 @@ def lambda_handler(event: dict, context) -> dict:
     # deployment, mọi chứng từ sẽ hỏng như nhau. Nổ ngay và nổ rõ, thay vì đánh
     # dấu PROCESSING rồi mới chết.
     #
-    # Nhãn ghi vào audit_log và đơn giá đều lấy TỪ CÙNG registry với hàm được
+    # Nhãn ghi vào dòng audit và đơn giá đều lấy TỪ CÙNG registry với hàm được
     # gọi. Tách ra là chỗ đã sai một lần: log nói một đằng, tiền trả một nẻo, và
     # chính chỗ đó làm ước tính chi phí lệch 20 lần.
     engine = _engine_name(event)
     label = ocr_engines.resolve(engine)["label"]
 
-    begin_step(document_id, "ocr")
+    begin_step(document_id, "ocr", project_id)
     content = read_object(s3_key)
     started = now_ms()
 
@@ -71,6 +71,8 @@ def lambda_handler(event: dict, context) -> dict:
             status="rate_limited",
             error=str(exc),
             latency_ms=now_ms() - started,
+            source="worker",
+            project_id=project_id,
         )
         raise
     except Exception as exc:
@@ -81,6 +83,8 @@ def lambda_handler(event: dict, context) -> dict:
             status="error",
             error=str(exc),
             latency_ms=now_ms() - started,
+            source="worker",
+            project_id=project_id,
         )
         raise
 
@@ -92,15 +96,17 @@ def lambda_handler(event: dict, context) -> dict:
         status="ok",
         estimated_cost_usd=ocr_engines.estimate_cost(engine, page_count),
         latency_ms=now_ms() - started,
+        source="worker",
+        project_id=project_id,
     )
 
     key = ocr_key(project_id, document_id)
     write_json(key, ocr_json)
-    # Lưu engine vào chính record document: `audit_log` có nhãn nhưng chưa route
-    # API nào đọc được, nên không lưu ở đây thì giao diện không có cách nào biết
+    # Lưu engine vào chính record document: dòng audit có nhãn nhưng xem bằng
+    # Logs Insights, nên không lưu ở đây thì giao diện không có cách nào biết
     # chứng từ này đã chạy bằng engine gì.
     finish_step(
-        document_id, "ocr", ocr_s3_key=key, page_count=page_count, ocr_engine=engine
+        document_id, "ocr", project_id, ocr_s3_key=key, page_count=page_count, ocr_engine=engine
     )
 
     return {**event, "ocr_s3_key": key, "page_count": page_count}

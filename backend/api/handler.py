@@ -3,13 +3,14 @@ import logging
 
 from common.errors import AppError
 
-from . import documents, process, projects, reconcile, review
+from . import anchor, documents, process, projects, reconcile, review
 from .http import (
     error_response,
     match_template,
     parse_body,
     request_method,
     request_path,
+    request_user,
 )
 
 logger = logging.getLogger()
@@ -26,7 +27,7 @@ logger.setLevel(logging.INFO)
 #
 # Thứ tự BÊN TRONG mỗi danh sách không quan trọng: match_template() đối chiếu
 # literal chính xác và bắt buộc cùng số đoạn, nên không template nào che template
-# khác. Nhưng một route KHÔNG được nằm ở hai danh sách, và tập 12 route phải
+# khác. Nhưng một route KHÔNG được nằm ở hai danh sách, và tập 14 route phải
 # trùng khít `local.api_routes` trong infra/modules/aws/main.tf —
 # tests/test_routes.py chặn cả hai lỗi đó offline.
 
@@ -40,6 +41,7 @@ DOCUMENT_ROUTES = [
     ("POST", "/projects/{project_id}/documents", documents.create_documents),
     ("GET", "/projects/{project_id}/documents", documents.list_documents),
     ("GET", "/projects/{project_id}/documents/{document_id}/ocr", documents.get_document_ocr),
+    ("DELETE", "/projects/{project_id}/documents/{document_id}", documents.delete_document),
 ]
 
 # reconcile.py và review.py đi cùng nhau: đây là một tính năng liền mạch (hai tab
@@ -52,12 +54,16 @@ REVIEW_ROUTES = [
     ("POST", "/reconciliations/{reconciliation_id}/review", review.review_reconciliation),
 ]
 
+ANCHOR_ROUTES = [
+    ("PUT", "/projects/{project_id}/anchor", anchor.set_anchor),
+]
+
 # Route DUY NHẤT gọi Step Functions trong toàn hệ thống.
 PROCESS_ROUTES = [
     ("POST", "/projects/{project_id}/process", process.process_project),
 ]
 
-ROUTES = PROJECT_ROUTES + DOCUMENT_ROUTES + REVIEW_ROUTES + PROCESS_ROUTES
+ROUTES = PROJECT_ROUTES + DOCUMENT_ROUTES + REVIEW_ROUTES + ANCHOR_ROUTES + PROCESS_ROUTES
 
 
 def resolve(routes: list, method: str, path: str):
@@ -86,7 +92,8 @@ def _dispatch(routes: list, event: dict) -> dict:
     params = {**(event.get("pathParameters") or {}), **params}
 
     try:
-        return handler(params, body)
+        user = request_user(event)
+        return handler(params, body, user)
     except AppError as exc:
         return error_response(exc.message, exc.status_code)
     except Exception as exc:
@@ -107,9 +114,10 @@ def _make_handler(routes: list, name: str):
 projects_handler = _make_handler(PROJECT_ROUTES, "projects_handler")
 documents_handler = _make_handler(DOCUMENT_ROUTES, "documents_handler")
 review_handler = _make_handler(REVIEW_ROUTES, "review_handler")
+anchor_handler = _make_handler(ANCHOR_ROUTES, "anchor_handler")
 process_handler = _make_handler(PROCESS_ROUTES, "process_handler")
 
-# GỘP đủ 12 route — KHÔNG được xoá. Dev server dựng một cửa duy nhất ở localhost
+# GỘP đủ 14 route — KHÔNG được xoá. Dev server dựng một cửa duy nhất ở localhost
 # (devserver/http_server.py, devserver/__main__.py) và test API gọi trực tiếp vào
 # đây. Cloud có bốn cửa, dev có một; đó là chỗ duy nhất hai môi trường khác nhau,
 # và nó nằm ở tầng vận chuyển chứ không phải tầng nghiệp vụ.

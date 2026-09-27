@@ -1,6 +1,26 @@
 # Data Model — DynamoDB (v2)
 
-## 1. Năm bảng
+## Payload document lớn và flag (2026-09-22)
+
+`validation` gồm `valid`, `schema_errors`, `rule_errors` (rỗng), `warnings`, `flags`,
+`comparison_incomplete`. Flag nghiệp vụ không chuyển document sang `FAILED`.
+Worker không đưa danh sách flag vào output Step Functions để tránh vượt giới hạn payload.
+
+`update_document` đo kích thước biểu diễn DynamoDB đã serialize bằng TypeSerializer
+(tính cả tên trường, wrapper và UTF-8). Từ 300 KiB, chuyển `extraction`, `validation`,
+`confidence`, `ungrounded_fields` sang một object S3 bất biến:
+`projects/{project_id}/document-payload/{document_id}/{uuid}.json`.
+DynamoDB giữ `document_payload_s3_key`; `get_item`/query document đọc lại dữ liệu đầy đủ.
+Ngưỡng có dư địa cho metadata và nhỏ hơn giới hạn 400 KiB; không cắt extraction để vừa bản ghi.
+Document đã chuyển sang S3 tiếp tục dùng S3 cho các bản sửa sau.
+
+Ghi S3 trước, cập nhật con trỏ sau; nếu ghi DynamoDB thất bại, con trỏ cũ vẫn đọc được.
+Các payload cũ được giữ, có thể phát sinh object không còn tham chiếu; chưa có tác vụ dọn tự động.
+Xóa document xóa object payload đang được tham chiếu, cùng upload/OCR/extraction hiện tại.
+Không thay đổi schema bảng hay migration dữ liệu cũ. API review cần `s3:PutObject`;
+cần triển khai quyền cùng backend trước khi sửa document lớn.
+
+## 1. Bốn bảng
 
 | Bảng | Mục đích | PK | SK |
 |---|---|---|---|
@@ -8,7 +28,9 @@
 | `documents` | Trạng thái + kết quả trích xuất 1 chứng từ | `document_id` | — |
 | `processing_runs` | Lịch sử mỗi lần bấm `/process` | `run_id` | — |
 | `reconciliations` | Mỗi lần đối chiếu + kết quả review | `reconciliation_id` | — |
-| `audit_log` | Lưu vết AI call, pipeline step, thao tác review | `entity_id` | `timestamp` |
+
+> Audit không còn bảng riêng: mỗi sự kiện là một dòng JSON trên stdout
+> (`common/audit.py` dùng `print`), xem `observability.md`.
 
 JSON nặng (OCR, extraction đầy đủ, danh sách discrepancy) đẩy lên S3; DynamoDB
 chỉ giữ trường cần truy vấn và summary.
@@ -136,32 +158,30 @@ review vào project thì `APPROVED` sẽ bị đá qua lại vô nghĩa mỗi l�
 Danh sách `discrepancies` đầy đủ nằm ở S3 (`s3_key`), lấy qua
 `GET /reconciliations/{id}`.
 
-## 6. `audit_log`
+## 6. Audit (CloudWatch Logs, không phải bảng)
+
+Mỗi sự kiện là một dòng JSON trên stdout:
 
 ```json
-{
-  "entity_id": "doc-2026-0002",
-  "timestamp": "2026-08-17T09:01:29Z",
-  "action": "AI_CALL",
-  "detail": {
-    "request_id": "req-8f3a",
-    "model": "gemini-2.5-flash",
-    "status": "ok",
-    "latency_ms": 4210,
-    "token_usage": { "prompt_tokens": 1200, "output_tokens": 350 },
-    "estimated_cost_usd": 0.0041
-  }
-}
+{"audit": 1, "action": "AI_CALL", "actor": null, "source": "worker",
+ "project_id": "prj-...", "entity_id": "doc-2026-0002",
+ "timestamp": "2026-08-17T09:01:29Z",
+ "detail": {"request_id": "req-8f3a", "model": "gemini-2.5-flash", "status": "ok"}}
 ```
-
-`entity_id` là `document_id` hoặc `project_id` tùy loại sự kiện.
 
 | Action | Ghi khi |
 |---|---|
 | `AI_CALL` | Mỗi lần gọi Document AI/Gemini — **rule cứng**, ghi cả khi lỗi và rate limit |
 | `PIPELINE_STEP` | Vào/xong/lỗi từng bước, có `attempt` |
+| `PROCESS_RUN` | Mọi quyết định của `/process`, kể cả quyết định **bỏ qua** |
+| `EDIT_OVERWRITTEN` | `force_edited=true` cho AI ghi đè dữ liệu người đã sửa tay |
 | `REVIEW_EDIT` | Người sửa tay một document |
 | `REVIEW_DECISION` | Approve/reject một reconciliation |
+| `PROJECT_CREATED` | Tạo project |
+| `DOCUMENTS_UPLOADED` | Upload chứng từ |
+| `RECONCILE_RUN` | Bấm đối chiếu |
+
+Chi tiết: `observability.md`.
 
 ## 7. S3 layout
 

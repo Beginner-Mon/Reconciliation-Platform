@@ -46,13 +46,18 @@ backend/
   devserver/ chạy backend ở localhost (moto server, AI THẬT) — KHÔNG vào Lambda zip
 frontend/    React 19 + TS + Vite + Tailwind v4; 2 màn hình, gọi API dev server
   tests/     conftest.py (moto), test_validate, test_crosscheck, test_api, test_devserver
-docs/        architecture.md, data-model.md, schemas.md, iac-plan.md
+docs/        architecture.md, data-model.md, schemas.md, iac-plan.md, observability.md
 evaluation/  spike đo chất lượng AI + FINDINGS.md
 infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Step Functions
              statemachine-test/ verify ASL bằng Step Functions Local
 ```
 
 ## 4. Quyết định thiết kế đã chốt — đừng đảo ngược nếu không có lý do mới
+
+- Validate nghiệp vụ tạo `validation.flags`, không làm `FAILED`. `valid` chỉ thể hiện cấu trúc xử lý được, không có nghĩa nghiệp vụ đã đúng hay được duyệt. Lỗi cấu trúc vẫn `FAILED` và giữ dữ liệu gốc.
+- Extraction giữ toàn bộ trường ngoài bảng trong `other_fields`; không suy diễn để làm phép tính khớp. Không thêm công thức riêng cho từng loại phí.
+- Giới hạn 3 bảng, 25 cột/bảng, 500 dòng/bảng, 500 ký tự/ô. Có rút gọn thì ghi cảnh báo và không kết luận tổng dòng/thiếu-thừa của nhóm đó.
+- Dữ liệu document lớn lưu S3 qua `document_payload_s3_key`; helper DynamoDB tự đọc lại đầy đủ. API review cần `s3:PutObject` để lưu bản sửa lớn. Payload cũ bất biến giúp tránh ghi đè dữ liệu trước khi cập nhật con trỏ.
 
 1. **Step Functions KHÔNG chờ Human Review** (không dùng task token). Review là
    bước cuối và EDIT là người sửa tay → không còn gì để orchestrate. Execution
@@ -161,7 +166,14 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   thử: wheel cài bằng `--platform manylinux2014` chứa phần biên dịch cho Linux
   (`pydantic_core._pydantic_core`), nạp trên Windows là chết dù gói hoàn toàn
   đúng cho Lambda. Và `Compress-Archive` của PS 5.1 hay dính "file is being used
-  by another process" khi antivirus quét — dùng `[System.IO.Compression.ZipFile]`.
+  by another process" khi antivirus quét — dùng .NET `ZipArchive`.
+- **Zip Lambda phải dùng dấu `/`, KHÔNG dùng `ZipFile::CreateFromDirectory`.**
+  Trên PS 5.1 (.NET Framework) nó ghi entry bằng `\` (`workers\extract.py`).
+  Lambda chạy Linux → không có thư mục `workers/` → cả 10 function chết lúc
+  cold start với `No module named 'workers'`, trong khi `terraform apply` vẫn
+  báo thành công và `phai_co_module` vẫn xanh (nó kiểm thư mục build, không kiểm
+  zip). `build_backend.ps1` giờ tự tạo từng entry với `/` và **kiểm lại chính
+  file zip**, gặp `\` là dừng.
 - **Client Textract phải đi qua `common/aws_real.py`**, KHÔNG dùng
   `boto3.client("textract")` trơn. Mọi client khác trong repo đọc
   `AWS_ENDPOINT_URL` để trỏ vào moto; moto có Textract giả trả `Block` bịa kèm
@@ -216,6 +228,30 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 - Bước `validate` **không gọi AI** nên `step_status="running"` của nó chỉ tồn
   tại vài micro giây, không quan sát được khi poll. Đúng cả ở production — đừng
   coi là lỗi.
+- **CORS `allow_headers` phải có `authorization`**, nếu không mọi request có `Authorization` chết ở preflight. `OPTIONS` preflight không qua authorizer (HTTP API tự trả từ `cors_configuration`), không cần route OPTIONS riêng.
+- **Phải gửi ID token, KHÔNG phải access token.** Authorizer khai `audience = [client_id]`, access token của Cognito mang `client_id` chứ không mang `aud` → gửi nhầm là 401 im lặng. Frontend `auth.ts` dùng `fetchAuthSession().tokens.idToken`.
+- **Danh tính lấy từ `cognito:username` (và `sub` dự phòng), KHÔNG lấy `email`.** Người dùng tự sửa được `email` bằng access token nếu `write_attributes` chứa `email` (mặc định app client cho phép), nên audit sẽ ghi `sep@congty.vn` thay vì `tri` — đúng lỗ Task 1 định bịt. Dùng `cognito:username` do admin đặt, không đổi được, và đặt `write_attributes = []` ở `aws_cognito_user_pool_client`.
+- **Nhãn "đã sửa tay" chỉ được xoá trong `workers/extract.py`**, cùng lần ghi với
+  `extraction`. Trước đây không chỗ nào xoá: sau `force_edited=true` dữ liệu đã
+  là của AI mà record vẫn mang `edited_fields`/`edited_by`. Xoá sớm hơn (lúc bấm
+  `/process`) thì OCR hay Gemini hỏng giữa chừng sẽ để lại dữ liệu người sửa mà
+  mất nhãn bảo vệ. Có test cho cả hai chiều (`test_worker_extract.py`,
+  `test_worker_ocr.py`).
+- **Dòng audit phải `print(..., flush=True)`.** stdout ghi ra file (không phải
+  terminal) thì Python đệm theo khối — đo thật trên devserver, không dòng audit
+  nào hiện ra cho tới khi bật `PYTHONUNBUFFERED`. Lambda timeout giữa chừng thì
+  phần còn trong bộ đệm mất luôn.
+- **Amplify deploy thủ công bằng zip**, không nối GitHub (token sẽ nằm trong tfstate local chưa mã hoá). Branch cố định `main`, URL `https://<branch>.<app_id>.amplifyapp.com` cho vào `local.cors_origins`.
+
+- **Bucket state phải có trước `terraform init`**: backend không dùng được biến.
+  Dùng stack `infra/bootstrap/` riêng, state bootstrap giữ local. `.gitignore`
+  phải chặn cả thư mục con bằng `infra/bootstrap/*.tfstate*`.
+- **Gemini key** đọc từ Secrets Manager qua `GEMINI_API_KEY_SECRET` và cache
+  trong tiến trình; env `GEMINI_API_KEY` được ưu tiên khi nạp (devserver/evaluation).
+  Test đụng tới phải reset `ai._gemini_api_key_cache`.
+- **Script `.ps1` có ký tự ngoài ASCII phải có BOM UTF-8**. PowerShell 5.1
+  đọc file không BOM theo codepage hệ thống (máy này là 1252); dấu `—` trong
+  chuỗi có thể thành `”` và làm vỡ cú pháp.
 
 ## 6. Thêm loại chứng từ mới
 
@@ -232,7 +268,7 @@ model. Rule cũ tự bỏ qua loại mới. Xem `docs/schemas.md` §1.
 - AI **không** tự phê duyệt/thay đổi dữ liệu nghiệp vụ — phải qua Human Review.
 - LLM chỉ trả structured output, bắt buộc qua Pydantic validation.
 - `core/` **không được gọi AI** (deterministic thuần, test offline được).
-- Mỗi lần gọi AI ghi 1 record `AI_CALL` vào `audit_log` (kể cả khi lỗi/rate limit).
+- Mỗi lần gọi AI ghi 1 dòng `AI_CALL` vào CloudWatch Logs (kể cả khi lỗi/rate limit). Dùng `print`, không dùng `logging`; không bật `logging_config { log_format = "JSON" }` vì CloudWatch không đọc được EMF.
 - S3 giữ raw + output lớn; DynamoDB giữ metadata/summary/reference.
 - Tiếng Việt dùng Document AI (generic); specialized Invoice/PO Parser **không
   hỗ trợ tiếng Việt**. Giới hạn online ~15 trang / 20MB.
@@ -263,7 +299,8 @@ cd backend; .venv\Scripts\python.exe -m pytest -q          # 86 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy
-cd infra; .\bin\terraform.exe validate
+# validate offline (không đọc backend S3) cần init -backend=false
+cd infra; .\bin\terraform.exe init -backend=false; .\bin\terraform.exe validate
 cd infra; .\bin\terraform.exe plan -var-file=dev.tfvars
 
 infra\scripts\build_backend.ps1        # -> 10 zip, MỖI Lambda một gói riêng
@@ -290,5 +327,4 @@ Chuỗi `Cause` tiếng Việt làm AWS CLI chết trên console cp1252 — đã
 
 ## 9. Chưa làm
 
-Frontend React (chưa có dòng nào) · auth/Cognito · WebSocket · remote tfstate ·
-dataset 50–100 tài liệu + ground truth + evaluation.
+WebSocket · dataset 50–100 tài liệu + ground truth + evaluation.

@@ -5,7 +5,7 @@ Trước đây cùng một thông tin bị khai lại ở bốn chỗ rời: `PR
 (evaluation/flows.py) và `ENGINE_LABEL` (evaluation/inspect_ocr.py). Thêm một
 engine là phải sửa đúng bốn chỗ và bốn chỗ phải khớp nhau.
 
-Gõ lệch một chỗ thì `audit_log` ghi sai tiền — ĐÃ XẢY RA RỒI: §5 CLAUDE.md ghi
+Gõ lệch một chỗ thì dòng audit ghi sai tiền — ĐÃ XẢY RA RỒI: §5 CLAUDE.md ghi
 "ước tính chi phí lệch 20 lần vì lấy giá Form Parser cho Document OCR".
 Lên năm engine mà vẫn để rời là chắc chắn lệch lại.
 """
@@ -24,7 +24,7 @@ def test_moi_engine_khai_du_ham_nhan_va_don_gia():
 
 
 def test_don_gia_dung_bang_da_kiem_chung():
-    """Đổi số ở đây là đổi số tiền ghi vào audit_log. Nguồn ghi trong docstring
+    """Đổi số ở đây là đổi số tiền ghi vào dòng audit. Nguồn ghi trong docstring
     của ocr_engines.py — sửa thì phải sửa cả nguồn."""
     assert ocr_engines.usd_per_page("dococr") == 0.0015
     assert ocr_engines.usd_per_page("formparser") == 0.030
@@ -35,7 +35,7 @@ def test_don_gia_dung_bang_da_kiem_chung():
 
 
 def test_nhan_audit_khong_duoc_trung_nhau():
-    """Hai engine cùng nhãn thì audit_log không phân biệt được đã chạy cái nào."""
+    """Hai engine cùng nhãn thì dòng audit không phân biệt được đã chạy cái nào."""
     nhan = [spec["label"] for spec in ocr_engines.ENGINES.values()]
     assert len(nhan) == len(set(nhan))
 
@@ -47,7 +47,7 @@ def test_doi_gia_bang_bien_moi_truong_khong_phai_sua_code(monkeypatch):
 
 def test_ten_engine_sai_thi_no_ngay_kem_danh_sach_ten_dung():
     """Im lặng rơi về Document AI là kiểu hỏng tệ nhất: chạy đúng, tính sai tiền,
-    và audit_log ghi một engine mà thật ra không hề chạy."""
+    và dòng audit ghi một engine mà thật ra không hề chạy."""
     with pytest.raises(ValueError) as exc:
         ocr_engines.resolve("textrakt")
 

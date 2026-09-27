@@ -8,6 +8,7 @@ import type {
   Reconciliation,
   UploadTarget,
 } from "./types";
+import { dangXuat, layToken } from "./auth";
 
 const BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 
@@ -18,15 +19,31 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = body === undefined ? {} : { "Content-Type": "application/json" };
+  try {
+    const token = await layToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  } catch {
+    // auth chưa sẵn sàng, bỏ qua
+  }
+
   let response: Response;
   try {
     response = await fetch(BASE + path, {
       method,
-      headers: body === undefined ? {} : { "Content-Type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, `Không kết nối được tới ${BASE}. Dev server đã chạy chưa?`);
+  }
+
+  if (response.status === 401) {
+    try {
+      await dangXuat();
+    } catch {
+      // bỏ qua
+    }
   }
 
   const text = await response.text();
@@ -63,21 +80,30 @@ export const api = {
   getOcr: (projectId: string, documentId: string) =>
     request<OcrResult>("GET", `/projects/${projectId}/documents/${documentId}/ocr`),
 
-  /** Chỉ dev server có route này. Production trả 404 → coi như AI thật. */
   editDocument: (projectId: string, documentId: string, fields: Partial<Extraction>) =>
     request<{ document: unknown; validation: unknown; reconciliation: Reconciliation }>(
       "PATCH",
       `/projects/${projectId}/documents/${documentId}`,
-      { fields, reviewer: "poc-user" },
+      { fields },
     ),
 
-  /** Một route cho cả duyệt lẫn từ chối — hai bên ghi cùng một bảng, cùng một
-   *  shape, khác đúng giá trị `decision`. */
   review: (reconciliationId: string, decision: "APPROVED" | "REJECTED") =>
     request<Reconciliation>("POST", `/reconciliations/${reconciliationId}/review`, {
       decision,
-      reviewer: "poc-user",
     }),
+
+  deleteDocument: (projectId: string, documentId: string) =>
+    request<{ project_id: string; document_id: string; reconciliation: Reconciliation | null }>(
+      "DELETE",
+      `/projects/${projectId}/documents/${documentId}`,
+    ),
+
+  setAnchor: (projectId: string, documentId: string) =>
+    request<{ project_id: string; anchor_document_ids: string[]; reconciliation: Reconciliation | null }>(
+      "PUT",
+      `/projects/${projectId}/anchor`,
+      { document_id: documentId },
+    ),
 };
 
 /** Upload thẳng lên S3 bằng presigned POST.

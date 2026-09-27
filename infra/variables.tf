@@ -1,7 +1,10 @@
 variable "aws_region" {
   description = "AWS region triển khai"
   type        = string
-  default     = "ap-southeast-1"
+  # us-east-1: processor Document AI đặt ở `us` nên Lambda gọi sang Google gần
+  # hơn nhiều so với Singapore — OCR/Gemini chiếm gần hết thời gian xử lý. Đổi
+  # lại là người dùng ở VN chịu thêm độ trễ mỗi request.
+  default = "us-east-1"
 }
 
 variable "app_name" {
@@ -24,6 +27,20 @@ variable "artifacts_dir" {
   EOT
   type        = string
   default     = "artifacts"
+}
+
+variable "log_retention_days" {
+  description = <<-EOT
+    Số ngày giữ log của 10 Lambda — cũng là hạn của vết audit (audit là dòng JSON
+    trong log). Mặc định 3653 = 10 năm, mức tối đa CloudWatch Logs cho phép, đặt
+    theo hạn lưu tài liệu kế toán.
+
+    Chỉ nhận đúng danh sách giá trị của CloudWatch Logs (1, 3, 5, 7, 14, 30, 60,
+    90, ..., 3653) — số khác là lỗi lúc apply. Hạ xuống 30 nếu chỉ cần điều tra
+    sự cố và không coi audit là hồ sơ kế toán.
+  EOT
+  type        = number
+  default     = 3653
 }
 
 variable "gcp_project_id" {
@@ -95,5 +112,5 @@ variable "gemini_api_key" {
 variable "frontend_origins" {
   description = "Origin được phép upload thẳng lên S3 (CORS)"
   type        = list(string)
-  default     = ["*"]
+  default     = []
 }

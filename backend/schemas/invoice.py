@@ -17,6 +17,7 @@ class Invoice(BaseModel):
     po_number: str | None = Field(default=None, pattern=DOC_NUMBER_PATTERN)
     items: list[LineItem] = Field(min_length=1)
     subtotal: int | None = Field(default=None, gt=0)
+    discount_amount: int | None = Field(default=None, ge=0)
     tax_rate: float | None = Field(default=None, ge=0, le=1)
     tax_amount: int | None = Field(default=None, ge=0)
     total_amount: int = Field(gt=0)

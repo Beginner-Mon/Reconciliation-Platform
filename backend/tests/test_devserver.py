@@ -65,7 +65,6 @@ def test_bang_dinh_nghia_dung_chung_khop_voi_moi_truong():
         "DOCUMENTS_TABLE",
         "RUNS_TABLE",
         "RECONCILIATIONS_TABLE",
-        "AUDIT_LOG_TABLE",
     }
     for spec in bootstrap.TABLE_DEFINITIONS:
         assert os.environ.get(spec["env"]), f"conftest chưa đặt {spec['env']}"

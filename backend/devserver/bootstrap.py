@@ -50,18 +50,6 @@ TABLE_DEFINITIONS = [
         "key_schema": [{"AttributeName": "reconciliation_id", "KeyType": "HASH"}],
         "attributes": [{"AttributeName": "reconciliation_id", "AttributeType": "S"}],
     },
-    {
-        "env": "AUDIT_LOG_TABLE",
-        "default": "audit_log",
-        "key_schema": [
-            {"AttributeName": "entity_id", "KeyType": "HASH"},
-            {"AttributeName": "timestamp", "KeyType": "RANGE"},
-        ],
-        "attributes": [
-            {"AttributeName": "entity_id", "AttributeType": "S"},
-            {"AttributeName": "timestamp", "AttributeType": "S"},
-        ],
-    },
 ]
 
 

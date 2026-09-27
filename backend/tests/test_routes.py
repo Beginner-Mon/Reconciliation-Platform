@@ -34,6 +34,7 @@ ROUTES_BY_DOMAIN = {
     "projects": handler.PROJECT_ROUTES,
     "documents": handler.DOCUMENT_ROUTES,
     "review": handler.REVIEW_ROUTES,
+    "anchor": handler.ANCHOR_ROUTES,
     "process": handler.PROCESS_ROUTES,
 }
 
@@ -173,6 +174,15 @@ def terraform_lambda_env() -> set[str]:
     return set(re.findall(r"^\s*(\w+)\s*=", block, re.M))
 
 
+def test_gemini_api_key_khong_nam_dang_chu_thuong_trong_lambda_env():
+    """GEMINI_API_KEY chữ thường lọt vào env của cả 10 Lambda là lộ bí mật.
+
+    Key phải qua Secrets Manager (GEMINI_API_KEY_SECRET), code đọc lúc chạy.
+    """
+    assert "GEMINI_API_KEY" not in terraform_lambda_env()
+    assert "GEMINI_API_KEY_SECRET" in terraform_lambda_env()
+
+
 def test_moi_engine_app_cho_chon_deu_co_du_env_tren_lambda():
     """Giao diện cho chọn engine nào thì Lambda phải chạy được engine đó.
 
@@ -242,6 +252,60 @@ def test_frontend_canh_bao_dung_engine_khong_ho_tro_tieng_viet():
 
     for ten, co in cap:
         assert (co == "true") is ocr_engines.ENGINES[ten]["supports_vietnamese"], ten
+
+
+def _route_blocks(text: str) -> list[str]:
+    """Cắt từng `resource \"aws_apigatewayv2_route\"` block."""
+    blocks: list[str] = []
+    needle = 'resource "aws_apigatewayv2_route"'
+    pos = 0
+    while True:
+        idx = text.find(needle, pos)
+        if idx == -1:
+            break
+        brace = text.find("{", idx)
+        if brace == -1:
+            break
+        depth = 1
+        in_str = False
+        i = brace + 1
+        while i < len(text):
+            ch = text[i]
+            if ch == '"' and text[i - 1] != "\\":
+                in_str = not in_str
+            elif not in_str:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        blocks.append(text[brace : i + 1])
+                        pos = i + 1
+                        break
+            i += 1
+        else:
+            break
+    return blocks
+
+
+def test_moi_route_co_JWT_authorizer():
+    """Mọi route phải có JWT, thiếu là lỗ hổng im lặng."""
+    text = MAIN_TF.read_text(encoding="utf-8")
+    blocks = _route_blocks(text)
+    assert blocks, "không tìm thấy resource aws_apigatewayv2_route"
+    for idx, block in enumerate(blocks):
+        assert 'authorization_type = "JWT"' in block, f"route block {idx} thiếu authorization_type JWT"
+        assert "authorizer_id" in block, f"route block {idx} thiếu authorizer_id"
+
+
+def test_cors_cho_phep_authorization_header():
+    """Thiếu authorization trong allow_headers là mọi request chết ở preflight."""
+    text = MAIN_TF.read_text(encoding="utf-8")
+    # tìm cors_configuration của API Gateway
+    m = re.search(r'cors_configuration\s*\{[^}]*allow_headers\s*=\s*\[(.*?)\]', text, re.S)
+    assert m, "không tìm thấy cors_configuration allow_headers"
+    headers = m.group(1).lower()
+    assert "authorization" in headers
 
 
 def _hcl_block_ts(text: str, name: str) -> str:

@@ -13,13 +13,17 @@ from common.s3 import reconciliation_key, write_json
 from core import run_crosscheck
 
 def run_reconciliation(project_id: str) -> dict:
+    from common.dynamodb import get_item
+
     documents = query_documents_by_project(project_id)
+    project = get_item(PROJECTS_TABLE, {"project_id": project_id}) or {}
+    anchor_ids = project.get("anchor_document_ids")
     candidates = [d for d in documents if d.get("extraction")]
     payload = [
         {"document_id": d["document_id"], "data": d["extraction"]} for d in candidates
     ]
 
-    result = run_crosscheck(payload)
+    result = run_crosscheck(payload, anchor_document_ids=anchor_ids if isinstance(anchor_ids, list) else None)
     reconciliation_id = new_reconciliation_id()
     s3_key = reconciliation_key(project_id, reconciliation_id)
 
@@ -60,6 +64,8 @@ def run_reconciliation(project_id: str) -> dict:
             "reconciliation_id": reconciliation_id,
             "discrepancy_count": result["discrepancy_count"],
         },
+        source="worker",
+        project_id=project_id,
     )
     return record
 

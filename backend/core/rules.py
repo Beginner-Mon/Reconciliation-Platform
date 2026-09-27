@@ -27,8 +27,50 @@ class DocumentRef:
     document_id: str
     document_type: str
     model: BaseModel
+    comparison_incomplete: bool = False
+    validation_flags: list[dict] = field(default_factory=list)
 
     def get(self, name: str):
+        # Compat: old field names → new Document fields
+        if name == "po_number":
+            return getattr(self.model, "order_reference", None) or getattr(self.model, "doc_number", None) or getattr(self.model, "po_number", None)
+        if name == "vendor":
+            return getattr(self.model, "seller", None) or getattr(self.model, "vendor", None)
+        if name == "vendor_tax_code":
+            return getattr(self.model, "seller_tax_code", None) or getattr(self.model, "vendor_tax_code", None)
+        if name == "buyer":
+            return getattr(self.model, "buyer", None)
+        if name == "items":
+            # Tổng hợp từ tables nếu là Document mới
+            if hasattr(self.model, "tables"):
+                from types import SimpleNamespace
+                items = []
+                for table in getattr(self.model, "tables", []) or []:
+                    h_name = next((c.header for c in table.columns if c.role == "item_name"), None)
+                    h_qty = next((c.header for c in table.columns if c.role == "quantity"), None)
+                    h_unit = next((c.header for c in table.columns if c.role == "unit"), None)
+                    h_price = next((c.header for c in table.columns if c.role == "unit_price"), None)
+                    if not h_name or not h_qty:
+                        continue
+                    for row in table.rows:
+                        from .validate import _number
+                        quantity = _number(row.get(h_qty))
+                        price = _number(row.get(h_price)) if h_price else None
+                        if quantity is None:
+                            continue
+                        items.append(SimpleNamespace(
+                            item_name=row.get(h_name),
+                            quantity=float(quantity),
+                            unit=row.get(h_unit) if h_unit else None,
+                            unit_price=float(price) if price is not None else None,
+                        ))
+                if items:
+                    return items
+            return getattr(self.model, "items", None)
+        if name in ("po_date", "invoice_date", "record_date", "doc_date"):
+            return getattr(self.model, "doc_date", None) or getattr(self.model, name, None)
+        if name in ("invoice_number", "record_number", "doc_number"):
+            return getattr(self.model, "doc_number", None) or getattr(self.model, name, None)
         return getattr(self.model, name, None)
 
     def has(self, name: str) -> bool:
@@ -57,16 +99,24 @@ class Discrepancy:
     values: list[DiscrepancyValue] = field(default_factory=list)
     difference: object | None = None
     explanation: str = ""
+    anchor_document_id: str | None = None
+    source: str = "rule"
+    confidence: float | None = None
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "rule_id": self.rule_id,
             "field": self.field,
             "severity": self.severity,
             "values": [v.to_dict() for v in self.values],
             "difference": self.difference,
             "explanation": self.explanation,
+            "anchor_document_id": self.anchor_document_id,
+            "source": self.source,
         }
+        if self.confidence is not None:
+            data["confidence"] = self.confidence
+        return data
 
 
 @dataclass

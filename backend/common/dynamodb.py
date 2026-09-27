@@ -1,4 +1,6 @@
 import os
+import json
+from uuid import uuid4
 from decimal import Decimal
 
 import boto3
@@ -8,7 +10,6 @@ PROJECTS_TABLE = os.environ.get("PROJECTS_TABLE", "projects")
 DOCUMENTS_TABLE = os.environ.get("DOCUMENTS_TABLE", "documents")
 RUNS_TABLE = os.environ.get("RUNS_TABLE", "processing_runs")
 RECONCILIATIONS_TABLE = os.environ.get("RECONCILIATIONS_TABLE", "reconciliations")
-AUDIT_LOG_TABLE = os.environ.get("AUDIT_LOG_TABLE", "audit_log")
 
 PROJECT_INDEX = os.environ.get("DOCUMENTS_PROJECT_INDEX", "project_id-index")
 PO_NUMBER_INDEX = os.environ.get("DOCUMENTS_PO_NUMBER_INDEX", "po_number-index")
@@ -57,7 +58,16 @@ def put_item(table: str, item: dict) -> None:
 def get_item(table: str, key: dict) -> dict | None:
     response = get_table(table).get_item(Key=key)
     item = response.get("Item")
-    return from_dynamo(item) if item is not None else None
+    result = from_dynamo(item) if item is not None else None
+    return _hydrate_document(result) if table == DOCUMENTS_TABLE and result else result
+
+
+def _hydrate_document(item: dict) -> dict:
+    key = item.get("document_payload_s3_key")
+    if key:
+        from .s3 import read_json
+        return {**item, **read_json(key)}
+    return item
 
 
 def update_item(
@@ -132,7 +142,8 @@ def query_index(table: str, index: str, key_field: str, key_value) -> list[dict]
         if not token:
             break
         kwargs["ExclusiveStartKey"] = token
-    return from_dynamo(items)
+    result = from_dynamo(items)
+    return [_hydrate_document(item) for item in result] if table == DOCUMENTS_TABLE else result
 
 
 def scan_table(table: str) -> list[dict]:
@@ -145,7 +156,8 @@ def scan_table(table: str) -> list[dict]:
         if not token:
             break
         kwargs["ExclusiveStartKey"] = token
-    return from_dynamo(items)
+    result = from_dynamo(items)
+    return [_hydrate_document(item) for item in result] if table == DOCUMENTS_TABLE else result
 
 
 def query_documents_by_project(project_id: str) -> list[dict]:
@@ -157,7 +169,23 @@ def query_documents_by_po_number(po_number: str) -> list[dict]:
 
 
 def update_document(document_id: str, **updates) -> bool:
-    return update_item(DOCUMENTS_TABLE, {"document_id": document_id}, updates)
+    payload_fields = {"extraction", "validation", "confidence", "ungrounded_fields"}
+    if not payload_fields.intersection(updates):
+        return update_item(DOCUMENTS_TABLE, {"document_id": document_id}, updates)
+    current = get_item(DOCUMENTS_TABLE, {"document_id": document_id}) or {}
+    merged = {**current, **updates, "document_id": document_id}
+    from boto3.dynamodb.types import TypeSerializer
+    serialized = TypeSerializer().serialize(to_dynamo(merged))
+    size = len(json.dumps(serialized, ensure_ascii=False, default=str).encode("utf-8"))
+    if size < 300 * 1024 and not current.get("document_payload_s3_key"):
+        return update_item(DOCUMENTS_TABLE, {"document_id": document_id}, updates)
+    from .s3 import write_json
+    key = f"projects/{merged['project_id']}/document-payload/{document_id}/{uuid4().hex}.json"
+    payload = {field: merged[field] for field in payload_fields if field in merged}
+    write_json(key, payload)
+    metadata = {field: value for field, value in updates.items() if field not in payload_fields}
+    metadata["document_payload_s3_key"] = key
+    return update_item(DOCUMENTS_TABLE, {"document_id": document_id}, metadata, remove=sorted(payload_fields))
 
 
 def update_project(project_id: str, **updates) -> bool:
@@ -179,3 +207,15 @@ def release_processing_run(project_id: str) -> bool:
         {"project_id": project_id},
         remove=["processing_run_id"],
     )
+
+
+def delete_item(table: str, key: dict, condition: str | None = None) -> None:
+    kwargs: dict = {"Key": key}
+    if condition:
+        kwargs["ConditionExpression"] = condition
+    try:
+        get_table(table).delete_item(**kwargs)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise
+        raise

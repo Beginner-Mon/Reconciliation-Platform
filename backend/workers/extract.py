@@ -17,7 +17,7 @@ def lambda_handler(event: dict, context) -> dict:
     project_id = event["project_id"]
     document_id = event["document_id"]
 
-    begin_step(document_id, "extract")
+    begin_step(document_id, "extract", project_id)
     ocr_json = read_json(event["ocr_s3_key"])
     started = now_ms()
 
@@ -31,6 +31,8 @@ def lambda_handler(event: dict, context) -> dict:
             status="rate_limited",
             error=str(exc),
             latency_ms=now_ms() - started,
+            source="worker",
+            project_id=project_id,
         )
         raise
     except Exception as exc:
@@ -41,6 +43,8 @@ def lambda_handler(event: dict, context) -> dict:
             status="error",
             error=str(exc),
             latency_ms=now_ms() - started,
+            source="worker",
+            project_id=project_id,
         )
         raise
 
@@ -53,6 +57,8 @@ def lambda_handler(event: dict, context) -> dict:
         usage=usage,
         estimated_cost_usd=estimate_gemini_cost(usage or {}),
         latency_ms=now_ms() - started,
+        source="worker",
+        project_id=project_id,
     )
 
     document_type = extracted.get("document_type")
@@ -77,11 +83,21 @@ def lambda_handler(event: dict, context) -> dict:
         "extraction": data,
         "confidence": confidence,
         "document_type": document_type,
+        "role": data.get("role") or "other",
         "ungrounded_fields": ungrounded,
+        "edited_fields": [],
+        "edited_by": None,
+        "edited_at": None,
     }
-    if data.get("po_number"):
+    if data.get("order_reference"):
+        updates["po_number"] = data["order_reference"]
+    elif data.get("po_number"):
         updates["po_number"] = data["po_number"]
+    if data.get("doc_number"):
+        updates["doc_number"] = data["doc_number"]
+    if data.get("order_reference"):
+        updates["order_reference"] = data["order_reference"]
 
-    finish_step(document_id, "extract", **updates)
+    finish_step(document_id, "extract", project_id, **updates)
 
     return {**event, "extraction_s3_key": key, "document_type": document_type}

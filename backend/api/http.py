@@ -1,9 +1,34 @@
 import json
 
+DEV_USER = "dev"
+
 HEADERS = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
 }
+
+
+def request_user(event: dict) -> str:
+    claims = (
+        event.get("requestContext", {})
+        .get("authorizer", {})
+        .get("jwt", {})
+        .get("claims")
+    )
+    if not isinstance(claims, dict) or not claims:
+        return DEV_USER
+    for key in ("cognito:username", "sub"):
+        value = claims.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                return stripped
+            continue
+        if value:
+            stripped = str(value).strip()
+            if stripped:
+                return stripped
+    return DEV_USER
 
 
 def json_response(body: dict, status_code: int = 200) -> dict:

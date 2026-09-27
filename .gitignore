@@ -28,14 +28,31 @@ __pycache__/
 # Terraform (bin/ = binary tải về, không commit; .terraform.lock.hcl thì CÓ commit)
 infra/bin/
 infra/.terraform/
+infra/bootstrap/.terraform/
 infra/*.tfstate
 infra/*.tfstate.*
+infra/bootstrap/*.tfstate*
+infra/backend.hcl
 infra/*.tfvars
 !infra/dev.tfvars.example
 infra/artifacts/
 # File plan CHỨA giá trị biến sensitive (gemini_api_key, khoá service account
-# Google) ở dạng đọc được. Commit là lộ key.
-infra/tfplan
-infra/*.tfplan
+# Google). Terraform nén plan thành zip nên `grep` KHÔNG thấy key — đừng lấy đó
+# làm bằng chứng là an toàn. Dấu `*` cuối để bắt cả `tfplan2`, `tfplan.bak`...
+infra/tfplan*
+infra/*.tfplan*
+infra/bootstrap/*.tfplan*
 infra/plan.json
 infra/build/
+
+# Log của terraform/devserver: chứa ARN, account id, đường dẫn máy cá nhân
+infra/*.log
+backend/*.log
+
+# Biến môi trường frontend: giữ .env.example, chặn mọi bản thật/bản lưu tạm
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Rác của công cụ chạy thử
+.codex-*.json

@@ -28,19 +28,13 @@ DOCUMENT_FIELDS = [
     "updated_at",
     "document_type",
     "po_number",
-    # Engine OCR đã chạy cho chứng từ này. Engine giờ chọn được theo TỪNG lần
-    # chạy, nên không lưu ra đây thì màn hình không phân biệt được chứng từ nào
-    # đọc bằng Textract, chứng từ nào bằng Document AI.
+    "doc_number",
+    "order_reference",
+    "role",
     "ocr_engine",
     "extraction",
-    # confidence từ OCR — màn review dùng để tô trường AI đọc không chắc.
-    # Spike đo được: conf 0,38 đúng là chỗ đọc sai. Thiếu trường này thì người
-    # review không biết nên soi chỗ nào trước.
     "confidence",
     "validation",
-    # Trường LLM trả về mà không tìm thấy trong text OCR — nhiều khả năng bị bịa.
-    # Để TOP-LEVEL chứ không nhét vào `validation`: worker validate ghi đè nguyên
-    # cả dict `validation` và nó chạy SAU extract, nhét vào đó là mất sạch.
     "ungrounded_fields",
     "edited_fields",
     "edited_at",
@@ -94,7 +88,7 @@ def progress_view(documents: list[dict]) -> dict:
     }
 
 
-def da_cu(reconciliation: dict, documents: list[dict]) -> bool:
+def da_cu(reconciliation: dict, documents: list[dict], project: dict | None = None) -> bool:
     """Kết quả đối chiếu này có bị lỗi thời không.
 
     Cũ = có chứng từ nào được sửa SAU khi đối chiếu chạy. Trước đây không cần
@@ -105,15 +99,31 @@ def da_cu(reconciliation: dict, documents: list[dict]) -> bool:
     document (`api/documents.py` lúc tạo, `api/process.py` lúc xếp hàng,
     `workers/steps.py` mỗi bước, `api/review.py` lúc sửa tay), và `now_iso()`
     trả ISO nên so chuỗi ra đúng thứ tự thời gian.
+
+    Xoá chứng từ cũng làm đợt cũ thành stale: reconciliation lưu `document_ids`
+    tại thời điểm đối chiếu, nếu có id không còn tồn tại trong documents hiện tại
+    thì đó là đợt cũ trước khi xoá (P1).
+    Đổi gốc cũng làm stale: project.anchor_updated_at > reconciliation.created_at (P2).
     """
     if not reconciliation:
         return False
+    # P1: đợt cũ chứa document đã bị xoá → stale để chặn duyệt
+    doc_ids = reconciliation.get("document_ids")
+    if isinstance(doc_ids, list) and doc_ids:
+        existing = {d.get("document_id") for d in documents}
+        if any(doc_id not in existing for doc_id in doc_ids):
+            return True
+    if project and project.get("anchor_updated_at"):
+        if project["anchor_updated_at"] > (reconciliation.get("created_at") or ""):
+            return True
     moi_nhat = max((d.get("updated_at") or "" for d in documents), default="")
-    return moi_nhat > (reconciliation.get("created_at") or "")
+    if moi_nhat > (reconciliation.get("created_at") or ""):
+        return True
+    return False
 
 
-def reconciliation_view(reconciliation: dict | None, documents: list[dict]) -> dict | None:
+def reconciliation_view(reconciliation: dict | None, documents: list[dict], project: dict | None = None) -> dict | None:
     """Bản ghi đối chiếu kèm cờ `is_stale` cho giao diện."""
     if not reconciliation:
         return None
-    return {**reconciliation, "is_stale": da_cu(reconciliation, documents)}
+    return {**reconciliation, "is_stale": da_cu(reconciliation, documents, project)}

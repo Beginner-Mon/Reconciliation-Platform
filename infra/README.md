@@ -29,7 +29,7 @@ Từ đây trở xuống, thay `terraform` bằng `.\bin\terraform.exe` nếu d�
 aws configure
 # AWS Access Key ID: <dán key tạo ở IAM>
 # AWS Secret Access Key: <dán secret>
-# region: ap-southeast-1
+# region: us-east-1   (khớp aws_region trong tfvars và stack bootstrap)
 ```
 
 ### Google Cloud (chọn 1 trong 2 cách)
@@ -51,11 +51,31 @@ Vào https://aistudio.google.com/apikey → Create API key → dán vào `dev.tf
 gemini_api_key = "AIza..."
 ```
 
-## 3. Tạo Document AI processor (thủ công, 2 phút)
+## 3. Việc thủ công bên Google (một lần)
 
+Terraform **cố ý không** bật API và **không** gán quyền trên GCP: hai việc đó đòi
+`Service Usage Admin` và `Project IAM Admin`, mà ai có `Project IAM Admin` thì tự
+gán được Owner cho chính mình. Đổi lại vài cú bấm dưới đây, tài khoản chạy
+Terraform chỉ cần **Service Account Admin + Service Account Key Admin**.
+
+**3.1 Tạo Document AI processor**
 1. Vào https://console.cloud.google.com/ai/document-ai/processor-library
-2. Chọn **Form Parser** → Create
-3. Copy processor ID (dạng `xxxxxxxxxxxxx`) → dán vào `dev.tfvars`
+2. Chọn **Document OCR** → Create → copy processor ID → `gcp_docai_ocr_processor_id`
+   (thêm **Form Parser** nếu cần đo bằng `evaluation/` → `gcp_docai_processor_id`)
+
+**3.2 Bật API cho project** (Console → APIs & Services → Library → Enable)
+`documentai.googleapis.com` · `iam.googleapis.com` ·
+`cloudresourcemanager.googleapis.com` · `serviceusage.googleapis.com`
+
+**3.3 Cấp quyền cho tài khoản chạy Terraform** (Console → IAM & Admin → IAM):
+`Service Account Admin` + `Service Account Key Admin`. **Không** cấp
+`Project IAM Admin`.
+
+**3.4 SAU khi `apply` xong**: gán `roles/documentai.apiUser` cho service account
+mà Terraform vừa tạo (`recon-lambda-<env>@<project>.iam.gserviceaccount.com`).
+Thiếu bước này thì engine `dococr` trả 403 lúc gọi Document AI.
+**Không** cần `roles/aiplatform.user` — Gemini dùng API key, không dùng service
+account này.
 
 ## 4. Điền giá trị vào dev.tfvars
 
@@ -76,13 +96,27 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_backend.ps1
 Tạo ra 10 file `artifacts/<tên function>.zip` — mỗi Lambda một gói riêng, chỉ
 chứa thư viện nó cần. `boto3` không nằm trong gói nào vì runtime Lambda đã có.
 
+## 5b. State remote (bắt buộc trước deploy prod)
+
+State chứa private key Google và Gemini key nên **không để local**:
+
+```powershell
+cd infra\bootstrap
+..\bin\terraform.exe init
+..\bin\terraform.exe apply              # copy output backend_hcl thành infra\backend.hcl
+cd ..
+.\bin\terraform.exe init -reconfigure -backend-config=backend.hcl
+```
+
+`prod.tfvars` copy từ `dev.tfvars`, đổi `env = "prod"`.
+
 ## 6. Deploy
 
 ```powershell
-terraform init
+terraform init -reconfigure -backend-config=backend.hcl
 terraform validate                      # kiểm cú pháp, không cần credential
-terraform plan -var-file=dev.tfvars     # xem trước thay đổi
-terraform apply -var-file=dev.tfvars    # gõ "yes" để triển khai
+terraform plan -var-file=prod.tfvars    # xem trước thay đổi
+terraform apply -var-file=prod.tfvars   # gõ "yes" để triển khai
 ```
 
 Trước khi apply, nên kiểm luồng Step Functions mà **không cần deploy** — xem
@@ -125,6 +159,36 @@ POST  {api_url}/reconciliations/{reconciliation_id}/review   {"decision":"APPROV
 Thêm document vào project đã xử lý: lặp lại bước 2 → 3. Bước 3 **chỉ OCR file
 mới**, các file cũ được skip (xem `skipped` trong response), rồi đối chiếu lại
 trên toàn bộ document của project.
+
+## 8. Frontend — Amplify Hosting (deploy thủ công)
+
+Frontend **không nối GitHub** (token sẽ nằm trong tfstate local chưa mã hoá). Deploy bằng zip:
+
+```powershell
+# 1. Điền VITE_... vào frontend/.env (lấy từ terraform output)
+terraform output -raw cognito_user_pool_id   # -> VITE_COGNITO_USER_POOL_ID
+terraform output -raw cognito_client_id     # -> VITE_COGNITO_CLIENT_ID
+terraform output -raw api_url               # -> VITE_API_URL
+
+# 2. Build + upload
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy_frontend.ps1
+# hoặc thủ công:
+# cd ..\frontend; npm run build; cd ..\infra
+# aws amplify create-deployment --app-id <amplify_app_id> --branch-name main
+# aws amplify start-deployment ...
+terraform output -raw amplify_app_url       # kiểm tra
+```
+
+## 9. Tạo tài khoản (Cognito)
+
+Tài khoản **chỉ tạo bằng script**, không qua Terraform (mật khẩu sẽ vào tfstate).
+Script không cầm mật khẩu — Cognito tự sinh mật khẩu tạm và gửi email mời:
+
+```powershell
+.\scripts\create_user.ps1 -Username tri -Email tri@example.com
+
+# Lần đầu đăng nhập sẽ bị bắt đổi mật khẩu (NEW_PASSWORD_REQUIRED) — LoginGate đã xử lý.
+```
 
 ## Xóa hạ tầng (cẩn thận)
 

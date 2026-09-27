@@ -10,7 +10,6 @@ import pytest
 from common.dynamodb import DOCUMENTS_TABLE, put_item
 from common.ids import new_document_id, new_project_id
 from common.s3 import write_object
-from common.dynamodb import AUDIT_LOG_TABLE, scan_table
 from common.s3 import upload_key
 
 OCR_GIA = {
@@ -44,12 +43,30 @@ def engine_gia(monkeypatch):
     return da_goi
 
 
-def _ai_calls() -> list[dict]:
-    return [
-        item["detail"]
-        for item in scan_table(AUDIT_LOG_TABLE)
-        if item.get("action") == "AI_CALL"
-    ]
+def _ai_calls(capsys) -> list[dict]:
+    from tests.test_audit import audit_events
+
+    return [item["detail"] for item in audit_events(capsys, "AI_CALL")]
+
+
+def test_ocr_loi_thi_giu_nguyen_nhan_sua_tay(tai_lieu, monkeypatch):
+    """OCR hỏng thì dữ liệu người sửa còn nguyên — nhãn bảo vệ cũng phải còn."""
+    from common.dynamodb import get_item, update_document
+
+    update_document(tai_lieu["document_id"], edited_fields=["vendor"], edited_by="tri")
+
+    def hong(name, content, mime_type, s3_key=None):
+        raise RuntimeError("OCR sập")
+
+    monkeypatch.setattr("common.ocr_engines.run", hong)
+    from workers.ocr import lambda_handler
+
+    with pytest.raises(RuntimeError):
+        lambda_handler(tai_lieu, None)
+
+    doc = get_item(DOCUMENTS_TABLE, {"document_id": tai_lieu["document_id"]})
+    assert doc["edited_fields"] == ["vendor"]
+    assert doc["edited_by"] == "tri"
 
 
 def test_khong_khai_gi_thi_dung_engine_mac_dinh(tai_lieu, engine_gia, monkeypatch):
@@ -65,7 +82,7 @@ def test_khong_khai_gi_thi_dung_engine_mac_dinh(tai_lieu, engine_gia, monkeypatc
 # --- Engine đi theo LẦN CHẠY, không theo tiến trình ------------------------
 
 
-def test_engine_trong_event_thang_bien_moi_truong(tai_lieu, engine_gia, monkeypatch):
+def test_engine_trong_event_thang_bien_moi_truong(tai_lieu, engine_gia, monkeypatch, capsys):
     """Đây là cả điểm của thay đổi này.
 
     `OCR_ENGINE` là biến môi trường nên nó cố định cho cả một deployment Lambda
@@ -79,7 +96,7 @@ def test_engine_trong_event_thang_bien_moi_truong(tai_lieu, engine_gia, monkeypa
     lambda_handler({**tai_lieu, "ocr_engine": "textract"}, None)
 
     assert engine_gia[0]["engine"] == "textract"
-    assert _ai_calls()[0]["model"] == "textract-detect-document-text"
+    assert _ai_calls(capsys)[0]["model"] == "textract-detect-document-text"
 
 
 def test_khong_co_trong_event_thi_roi_ve_bien_moi_truong(
@@ -97,7 +114,7 @@ def test_khong_co_trong_event_thi_roi_ve_bien_moi_truong(
 def test_luu_lai_engine_da_chay_vao_document(tai_lieu, engine_gia, monkeypatch):
     """Không lưu thì giao diện không có cách nào biết chứng từ này chạy bằng gì.
 
-    Nhãn CÓ vào audit_log, nhưng bảng đó chưa có route API nào đọc.
+    Nhãn CÓ vào dòng audit, xem bằng Logs Insights.
     """
     from common.dynamodb import DOCUMENTS_TABLE, get_item
     from workers.ocr import lambda_handler
@@ -118,26 +135,26 @@ def test_engine_sai_trong_event_cung_no(tai_lieu, engine_gia, monkeypatch):
     assert engine_gia == []
 
 
-def test_OCR_ENGINE_chon_dung_engine_va_ghi_dung_nhan(tai_lieu, engine_gia, monkeypatch):
+def test_OCR_ENGINE_chon_dung_engine_va_ghi_dung_nhan(tai_lieu, engine_gia, monkeypatch, capsys):
     monkeypatch.setenv("OCR_ENGINE", "textract")
     from workers.ocr import lambda_handler
 
     lambda_handler(tai_lieu, None)
 
     assert engine_gia[0]["engine"] == "textract"
-    ghi = _ai_calls()[0]
+    ghi = _ai_calls(capsys)[0]
     assert ghi["model"] == "textract-detect-document-text"
     assert ghi["status"] == "ok"
 
 
-def test_chi_phi_tinh_theo_don_gia_cua_dung_engine(tai_lieu, engine_gia, monkeypatch):
+def test_chi_phi_tinh_theo_don_gia_cua_dung_engine(tai_lieu, engine_gia, monkeypatch, capsys):
     """2 trang x $0,065 = $0,13. Lấy nhầm đơn giá dococr sẽ ra $0,003."""
     monkeypatch.setenv("OCR_ENGINE", "textract-analyze")
     from workers.ocr import lambda_handler
 
     lambda_handler(tai_lieu, None)
 
-    assert float(_ai_calls()[0]["estimated_cost_usd"]) == pytest.approx(0.13)
+    assert float(_ai_calls(capsys)[0]["estimated_cost_usd"]) == pytest.approx(0.13)
 
 
 def test_truyen_s3_key_xuong_engine(tai_lieu, engine_gia, monkeypatch):
