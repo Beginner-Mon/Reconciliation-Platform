@@ -63,15 +63,14 @@ def test_uoc_tinh_chi_phi_theo_dung_engine():
     assert ocr_engines.estimate_cost("textract-analyze", 14) == pytest.approx(0.91)
 
 
-def test_mac_dinh_la_textract():
-    """Đổi từ dococr sang textract vì đang có free tier của AWS.
+def test_mac_dinh_la_dococr():
+    """Chốt 2026-10-05: mặc định là dococr vì Textract mất dấu tiếng Việt.
 
-    ĐÁNH ĐỔI CÓ Ý THỨC: Textract KHÔNG hỗ trợ tiếng Việt (đo trên hoá đơn thật:
-    `Phuring Khuong Mai` <- `Phường Khương Mai`). Số thì vẫn đọc đúng, nên chấp
-    nhận được cho POC — nhưng cảnh báo phải hiện ngay chỗ chọn engine, xem
-    `app_choices()`, chứ không chôn trong tài liệu.
+    Đo trên hoá đơn thật: `Phuring Khuong Mai` <- `Phường Khương Mai`. Textract
+    vẫn chọn được, và cảnh báo vẫn phải hiện ngay chỗ chọn engine — xem
+    `app_choices()` — chứ không chôn trong tài liệu.
     """
-    assert ocr_engines.DEFAULT_ENGINE == "textract"
+    assert ocr_engines.DEFAULT_ENGINE == "dococr"
 
 
 # --- Engine cho APP vs engine cho ĐO ĐẠC ----------------------------------

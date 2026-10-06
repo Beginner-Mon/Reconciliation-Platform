@@ -69,19 +69,19 @@ variable "ocr_engine" {
   description = <<-EOT
     Engine OCR MẶC ĐỊNH của worker. Phải khớp APP_ENGINES trong
     backend/common/ocr_engines.py:
-      textract  Amazon Textract DetectDocumentText  $0,0015/trang  (mặc định)
-      dococr    Document AI Enterprise Document OCR $0,0015/trang
+      textract  Amazon Textract DetectDocumentText  $0,0015/trang
+      dococr    Document AI Enterprise Document OCR $0,0015/trang  (mặc định)
 
     Đây chỉ là mặc định: giao diện chọn lại được cho từng lần chạy, và
     `/process` truyền engine qua payload xuống Map ItemSelector.
 
     CẢNH BÁO: textract KHÔNG hỗ trợ tiếng Việt (AWS chỉ liệt kê English, French,
     German, Italian, Portuguese, Spanish) — đo trên chứng từ thật thì mất gần
-    hết dấu, tuy số vẫn đọc đúng. Vẫn để mặc định vì đang có free tier. Cần độ
-    chính xác tiếng Việt thì chọn dococr. Xem evaluation/FINDINGS.md.
+    hết dấu, tuy số vẫn đọc đúng. Vì vậy mặc định là dococr; textract vẫn chọn
+    được. Xem evaluation/FINDINGS.md.
   EOT
   type        = string
-  default     = "textract"
+  default     = "dococr"
 
   validation {
     condition     = contains(["textract", "dococr"], var.ocr_engine)

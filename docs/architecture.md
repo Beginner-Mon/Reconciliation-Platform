@@ -147,8 +147,8 @@ project chạy được bằng hai engine khác nhau — điều kiện cần đ
 
 | Engine | Nhà cung cấp | $/trang | Có gì | App chọn được |
 |---|---|---|---|---|
-| `textract` *(mặc định)* | Textract DetectDocumentText | 0,0015 | text, dòng, confidence | ✓ |
-| `dococr` | Document AI Enterprise Document OCR | 0,0015 | text, khối, confidence | ✓ |
+| `textract` | Textract DetectDocumentText | 0,0015 | text, dòng, confidence | ✓ |
+| `dococr` *(mặc định)* | Document AI Enterprise Document OCR | 0,0015 | text, khối, confidence | ✓ |
 | `layout` | Document AI Layout Parser | 0,010 | + chunk, bảng phức tạp | chỉ `evaluation/` |
 | `formparser` | Document AI Form Parser | 0,030 | + key-value, bảng | chỉ `evaluation/` |
 | `textract-analyze` | Textract AnalyzeDocument | 0,065 | + key-value, bảng, khối | chỉ `evaluation/` |
@@ -162,8 +162,8 @@ key_value_pairs`), nên đổi engine không đụng tới extract, validate hay
 
 **Textract không hỗ trợ tiếng Việt** (AWS chỉ hỗ trợ English, French, German,
 Italian, Portuguese, Spanish). Đo trên hoá đơn thật: mất gần hết dấu nhưng số
-đọc đúng hết. Vẫn để mặc định vì đang có free tier — bù lại giao diện hiện cảnh
-báo ngay tại menu chọn engine, và đổi sang `dococr` được cho từng chứng từ.
+đọc đúng hết. Vì vậy mặc định là `dococr`; `textract` vẫn chọn được cho từng
+chứng từ, và giao diện hiện cảnh báo ngay tại menu chọn engine.
 Hai chi tiết vận hành riêng của chúng: phải dùng **API async** (bản sync giới
 hạn PDF 1 trang) và async chỉ **đọc file từ S3** chứ không nhận bytes — trên
 Lambda file đã nằm sẵn đúng chỗ, ở máy local phải có bucket tạm.

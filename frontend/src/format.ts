@@ -109,4 +109,4 @@ export const OCR_ENGINES = [
 ] as const;
 
 /** Mặc định của nút "Xử lý" — phải khớp DEFAULT_ENGINE bên server. */
-export const DEFAULT_OCR_ENGINE = "textract";
+export const DEFAULT_OCR_ENGINE = "dococr";

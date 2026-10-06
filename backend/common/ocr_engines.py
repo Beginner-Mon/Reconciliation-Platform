@@ -27,14 +27,12 @@ import os
 from .ai_clients import ocr_with_document_ai, ocr_with_layout_parser
 from .textract import ocr_with_textract, ocr_with_textract_analyze
 
-# Mặc định là Textract vì đang có free tier của AWS.
+# Mặc định là dococr (chốt 2026-10-05): đo trên hoá đơn thật thì Textract mất
+# gần hết dấu tiếng Việt (`Phuring Khuong Mai` <- `Phường Khương Mai`).
 #
-# ĐÁNH ĐỔI CÓ Ý THỨC, không phải trôi vào: đo trên hoá đơn thật thì Textract mất
-# gần hết dấu tiếng Việt (`Phuring Khuong Mai` <- `Phường Khương Mai`), nhưng số
-# đọc đúng hết và Gemini vẫn trích xuất chính xác. Cảnh báo phải hiện NGAY chỗ
-# người dùng chọn engine — `app_choices()[...]["supports_vietnamese"]` — chứ
-# không chôn trong tài liệu.
-DEFAULT_ENGINE = "textract"
+# `textract` vẫn chọn được. Cảnh báo phải hiện NGAY chỗ người dùng chọn engine
+# — `app_choices()[...]["supports_vietnamese"]` — chứ không chôn trong tài liệu.
+DEFAULT_ENGINE = "dococr"
 
 # Engine mà APP được phép chọn: API, dev server và giao diện chỉ biết hai tên
 # này. Thứ tự ở đây là thứ tự hiện trên giao diện.

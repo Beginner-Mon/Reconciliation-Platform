@@ -15,9 +15,9 @@ env        = "dev"
 # định của nút "Xử lý".
 #
 # textract KHÔNG hỗ trợ tiếng Việt: đo trên hoá đơn thật thì mất gần hết dấu
-# (`Phuring Khuong Mai` <- `Phường Khương Mai`) nhưng SỐ đọc đúng hết. Để mặc
-# định vì đang có free tier AWS; cần dấu thì đổi sang dococr.
-ocr_engine = "textract"
+# (`Phuring Khuong Mai` <- `Phường Khương Mai`) nhưng SỐ đọc đúng hết. Vì vậy
+# mặc định là dococr; textract vẫn chọn được trên giao diện.
+ocr_engine = "dococr"
 
 
 # ===== GOOGLE CLOUD =====

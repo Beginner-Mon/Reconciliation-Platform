@@ -130,7 +130,7 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   `payload` **luôn** phải mang khoá `ocr_engine`: thiếu là States.Runtime, chết
   cả run chứ không phải một chứng từ.
 - Bảng `ENGINES` giữ đủ **5** engine nhưng app chỉ cho chọn **2**
-  (`APP_ENGINES = ("textract", "dococr")`, mặc định `textract`). Ba engine kia
+  (`APP_ENGINES = ("textract", "dococr")`, mặc định `dococr`). Ba engine kia
   còn sống vì `evaluation/flows.py` sinh flow từ chính bảng đó — xoá là mất khả
   năng đo. Lối vào của app (`/process`, `--processor`, giao diện) đi qua
   `resolve_for_app()`; `evaluation/` vẫn dùng `resolve()`.
@@ -330,11 +330,10 @@ model. Rule cũ tự bỏ qua loại mới. Xem `docs/schemas.md` §1.
   `Hinh there thanh toan` ← *Hình thức thanh toán*) nhưng **số đọc đúng hết** và
   Gemini vẫn trích xuất chính xác cả 7 dòng hàng.
 
-  `textract` vẫn là **mặc định** vì đang có free tier AWS — đánh đổi có ý thức,
-  không phải trôi vào. Bù lại, cảnh báo phải hiện **ngay chỗ người dùng chọn
-  engine** (`app_choices()[...]["supports_vietnamese"]` → menu "Chạy lại với…"
-  và dòng LƯU Ý lúc devserver khởi động), không được chôn trong tài liệu. Cần độ
-  chính xác tiếng Việt thì chọn `dococr` — giao diện đổi được cho từng chứng từ.
+  Vì vậy `dococr` là **mặc định** (chốt 2026-10-05). `textract` vẫn chọn được,
+  và cảnh báo vẫn phải hiện **ngay chỗ người dùng chọn engine**
+  (`app_choices()[...]["supports_vietnamese"]` → menu "Chạy lại với…" và dòng
+  LƯU Ý lúc devserver khởi động), không được chôn trong tài liệu.
 
   [limits-document.html]: https://docs.aws.amazon.com/textract/latest/dg/limits-document.html
 - Comment/message trong code viết tiếng Việt (theo code hiện có).

@@ -93,13 +93,13 @@ variable "gemini_model" {
 
 variable "ocr_engine" {
   description = <<-EOT
-    Engine OCR mặc định: textract | dococr. Giao diện chọn lại được cho từng
-    lần chạy. textract KHÔNG hỗ trợ tiếng Việt (mất dấu, số vẫn đúng) — để mặc
-    định vì đang có free tier; cần dấu thì chọn dococr.
+    Engine OCR mặc định: dococr | textract. Giao diện chọn lại được cho từng
+    lần chạy. Mặc định là dococr vì textract KHÔNG hỗ trợ tiếng Việt (mất dấu,
+    số vẫn đúng); textract vẫn chọn được.
     Xem backend/common/ocr_engines.py và evaluation/FINDINGS.md.
   EOT
   type        = string
-  default     = "textract"
+  default     = "dococr"
 }
 
 variable "gemini_api_key" {
