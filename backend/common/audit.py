@@ -156,3 +156,7 @@ def log_project_delete_started(project_id, detail, *, actor=None, source="api"):
 
 def log_project_deleted(project_id, detail, *, actor=None, source="api"):
     _log(project_id, "PROJECT_DELETED", detail, actor=actor, source=source, project_id=project_id)
+
+
+def log_process_run_unstuck(project_id, detail, *, actor=None, source="api"):
+    _log(project_id, "PROCESS_RUN_UNSTUCK", detail, actor=actor, source=source, project_id=project_id)

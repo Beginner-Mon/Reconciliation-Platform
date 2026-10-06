@@ -1,3 +1,4 @@
+import json
 import os
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-southeast-1")
@@ -53,6 +54,7 @@ def started_executions(monkeypatch):
     import api.process as process_module
 
     monkeypatch.setattr(process_module, "start_execution", fake_start_execution)
+    monkeypatch.setattr(process_module, "execution_is_running", lambda arn: True)
     return calls
 
 
@@ -62,7 +64,9 @@ def doi_chieu_tai_cho(monkeypatch):
 
     Production gọi `recon-reconcile-dev` để cả hệ thống chỉ có MỘT chỗ chạy đối
     chiếu. moto không chạy được code của mình trong Lambda giả, nên test thay
-    lời gọi đó bằng chính hàm mà Lambda kia sẽ chạy.
+    lời gọi đó bằng chính `lambda_handler` mà Lambda kia chạy, qua một vòng
+    `json.dumps`/`loads` như Lambda thật — vá thẳng `run_reconciliation` từng
+    che một lỗi chỉ có trên cloud.
 
     Vá theo TÊN ĐÃ BIND trong từng module gọi (`api.reconcile`, `api.process`),
     không vá `common.reconcile_client` — vì các module đó dùng
@@ -72,9 +76,15 @@ def doi_chieu_tai_cho(monkeypatch):
     `autouse` vì gần như test API nào cũng chạm tới đối chiếu; để tự khai thì
     quên một chỗ là lỗi khó hiểu chứ không phải lỗi rõ ràng.
     """
-    from workers.reconcile import run_reconciliation
+    from workers.reconcile import lambda_handler
+
+    def doi_chieu(project_id, run_id=None):
+        event = {"project_id": project_id}
+        if run_id:
+            event["run_id"] = run_id
+        return json.loads(json.dumps(lambda_handler(event, None)))
 
     for ten in ("api.reconcile", "api.process", "api.documents"):
         module = __import__(ten, fromlist=["invoke_reconcile"])
         if hasattr(module, "invoke_reconcile"):
-            monkeypatch.setattr(module, "invoke_reconcile", run_reconciliation)
+            monkeypatch.setattr(module, "invoke_reconcile", doi_chieu)

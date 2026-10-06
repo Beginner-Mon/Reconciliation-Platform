@@ -79,10 +79,12 @@ export const api = {
     request<ProcessResult>("POST", `/projects/${id}/process`, options),
 
   stopProcess: (id: string) =>
-    request<{ project_id: string; run_id: string; cancel_requested_at: string }>(
-      "POST",
-      `/projects/${id}/process/stop`,
-    ),
+    request<{
+      project_id: string;
+      run_id: string;
+      cancel_requested_at: string;
+      status: "STOPPING" | "CANCELLED";
+    }>("POST", `/projects/${id}/process/stop`),
 
   reconcile: (id: string) => request<Reconciliation>("POST", `/projects/${id}/reconcile`),
 

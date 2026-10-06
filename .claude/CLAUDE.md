@@ -315,6 +315,20 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   (`do_<METHOD>` và `Access-Control-Allow-Methods`). Thiếu `PUT` thì
   `PUT /anchor` ở localhost trả 501 trong khi cloud chạy bình thường. Đã có test
   chặn.
+- **Bấm Dừng gỡ được run đã CHẾT.** `stop_processing` coi run là chết khi đủ
+  hai điều kiện: `run.status == "PROCESSING"` VÀ execution không còn `RUNNING`
+  (`common/stepfunctions.py:execution_is_running`). Khi đó nó gọi Lambda
+  reconcile kèm `run_id`, Lambda thấy cờ dừng nên chạy `_finish_cancelled_run`.
+  Thiếu điều kiện thứ nhất thì run vừa kết thúc bình thường sẽ bị đánh
+  `CANCELLED` đè lên. Lỗi Step Functions khác `ExecutionDoesNotExist` phải nổ
+  ra, không được coi là "đã chết". Đường này CHƯA chạy lần nào trên Step
+  Functions thật — test dùng moto và execution giả.
+- **`_finish_cancelled_run` nhả khoá CÓ ĐIỀU KIỆN** (`processing_run_id` phải
+  đúng là run đó). Nhả vô điều kiện thì đường gỡ run chết có thể mở khoá của một
+  run khác vừa claim.
+- **Shim đối chiếu của dev server và test đi qua `lambda_handler`**, không qua
+  `run_reconciliation`, và test thêm một vòng `json.dumps`/`loads`. Sửa
+  `devserver/pipeline.py:install` thì phải sửa `tests/conftest.py` cho khớp.
 
 ## 6. Thêm loại chứng từ mới
 

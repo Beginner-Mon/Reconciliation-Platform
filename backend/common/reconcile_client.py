@@ -34,7 +34,7 @@ def get_lambda():
     return _lambda
 
 
-def invoke_reconcile(project_id: str) -> dict:
+def invoke_reconcile(project_id: str, run_id: str | None = None) -> dict:
     """Chạy đối chiếu cho project, trả về bản ghi reconciliation.
 
     Payload khớp `workers/reconcile.py lambda_handler` — cùng hình dạng mà Step
@@ -43,10 +43,14 @@ def invoke_reconcile(project_id: str) -> dict:
     if not RECONCILE_LAMBDA_ARN:
         raise RuntimeError("Thiếu RECONCILE_LAMBDA_ARN")
 
+    payload = {"project_id": project_id}
+    if run_id:
+        payload["run_id"] = run_id
+
     response = get_lambda().invoke(
         FunctionName=RECONCILE_LAMBDA_ARN,
         InvocationType="RequestResponse",
-        Payload=json.dumps({"project_id": project_id}, ensure_ascii=False, default=str),
+        Payload=json.dumps(payload, ensure_ascii=False, default=str),
     )
 
     # Lambda trả 200 kể cả khi hàm bên trong ném lỗi — phải soi FunctionError,

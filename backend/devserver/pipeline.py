@@ -181,24 +181,34 @@ def run_local(payload: dict, plan: dict | None = None) -> None:
             )
 
 
+def execution_alive(threads: dict, execution_arn: str) -> bool:
+    thread = threads.get(execution_arn.rsplit(":", 1)[-1])
+    return bool(thread and thread.is_alive())
+
+
 def install() -> dict:
     """Thay StartExecution bằng orchestrator cục bộ chạy trong thread nền."""
     import api.process as process_module
 
     plan = build_plan()
+    threads: dict[str, threading.Thread] = {}
 
     def start_execution(name: str, payload: dict) -> str:
         thread = threading.Thread(
             target=run_local, args=(payload, plan), daemon=True, name=f"run-{name}"
         )
+        threads[name] = thread
         thread.start()
         return f"arn:aws:states:local:000000000000:execution:devserver:{name}"
 
     process_module.start_execution = start_execution
+    process_module.execution_is_running = lambda arn: execution_alive(threads, arn)
 
     # Đối chiếu: production gọi sang Lambda `recon-reconcile-dev` để cả hệ thống
     # chỉ có MỘT chỗ chạy. moto không chạy được code của mình trong Lambda giả,
-    # nên ở đây thay bằng chính hàm mà Lambda kia sẽ chạy.
+    # nên ở đây gọi thẳng CHÍNH handler mà Lambda kia chạy — qua `lambda_handler`
+    # chứ không qua `run_reconciliation`, để dev trả đúng thứ cloud trả và để
+    # `run_id` đi được tới nhánh kết thúc run bị dừng.
     #
     # Vá theo TÊN ĐÃ BIND trong từng module gọi, không vá `common.reconcile_client`
     # — các module dùng `from ... import invoke_reconcile` nên mỗi module giữ một
@@ -206,7 +216,13 @@ def install() -> dict:
     import api.documents as documents_module
     import api.reconcile as reconcile_module
 
+    def invoke_reconcile(project_id: str, run_id: str | None = None) -> dict:
+        event = {"project_id": project_id}
+        if run_id:
+            event["run_id"] = run_id
+        return workers.reconcile.lambda_handler(event, None)
+
     for module in (reconcile_module, process_module, documents_module):
-        module.invoke_reconcile = workers.reconcile.run_reconciliation
+        module.invoke_reconcile = invoke_reconcile
 
     return plan

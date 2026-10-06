@@ -110,7 +110,7 @@ def _finish_cancelled_run(project_id: str, run_id: str) -> dict:
         {"project_id": project_id},
         {"last_run_id": run_id, "updated_at": now_iso()},
     )
-    release_processing_run(project_id)
+    release_processing_run(project_id, run_id)
     log_pipeline_step(
         project_id,
         "run",

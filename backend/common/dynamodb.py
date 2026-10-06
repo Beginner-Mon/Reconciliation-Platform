@@ -245,11 +245,19 @@ def claim_processing_run(project_id: str, run_id: str) -> bool:
     )
 
 
-def release_processing_run(project_id: str) -> bool:
+def release_processing_run(project_id: str, run_id: str | None = None) -> bool:
+    if run_id is None:
+        return update_item(
+            PROJECTS_TABLE,
+            {"project_id": project_id},
+            remove=["processing_run_id"],
+        )
     return update_item(
         PROJECTS_TABLE,
         {"project_id": project_id},
         remove=["processing_run_id"],
+        condition="processing_run_id = :run_id",
+        condition_values={":run_id": run_id},
     )
 
 

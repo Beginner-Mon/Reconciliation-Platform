@@ -34,3 +34,13 @@ def start_execution(name: str, payload: dict) -> str:
             prefix = STATE_MACHINE_ARN.replace(":stateMachine:", ":execution:")
             return f"{prefix}:{name}"
         raise
+
+
+def execution_is_running(execution_arn: str) -> bool:
+    try:
+        response = get_sfn().describe_execution(executionArn=execution_arn)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ExecutionDoesNotExist":
+            return False
+        raise
+    return response["status"] == "RUNNING"

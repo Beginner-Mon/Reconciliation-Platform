@@ -197,6 +197,7 @@ Mỗi sự kiện là một dòng JSON trên stdout:
 | `PROCESS_STOP_REQUESTED` | Bấm Dừng một run đang chạy |
 | `PROJECT_DELETE_STARTED` | Bắt đầu xoá project — ghi TRƯỚC khi xoá: tên, chứng từ, id run/reconciliation |
 | `PROJECT_DELETED` | Xoá project xong — số lượng thật đã xoá |
+| `PROCESS_RUN_UNSTUCK` | Bấm Dừng trên run đã chết, run được kết thúc ngay |
 
 Chi tiết: `observability.md`.
 

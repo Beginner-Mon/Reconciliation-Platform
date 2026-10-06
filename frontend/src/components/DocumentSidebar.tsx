@@ -245,11 +245,11 @@ export function DocumentSidebar({
           {running ? (
             <button
               onClick={onStop}
-              disabled={busy || stopping}
+              disabled={busy}
               aria-label="Dừng run đang chạy"
               title={
                 stopping
-                  ? "Đang dừng — chờ bước đang chạy dở kết thúc"
+                  ? "Đang dừng — bấm lại để kiểm tra run còn chạy không"
                   : "Dừng: không gọi AI thêm cho các chứng từ còn lại"
               }
               className="flex w-9 items-center justify-center rounded-r-lg border-l border-red-500 bg-red-600 text-white transition hover:bg-red-700 disabled:opacity-50"

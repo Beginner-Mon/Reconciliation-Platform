@@ -200,11 +200,14 @@ export function ProjectDetail() {
     if (!projectId) return;
     await run(
       async () => {
-        await api.stopProcess(projectId);
+        const result = await api.stopProcess(projectId);
         await refresh();
+        return result;
       },
-      () =>
-        "Đang dừng — chờ bước đang chạy dở kết thúc. Lời gọi AI đang chạy không thu hồi được.",
+      (result) =>
+        result.status === "CANCELLED"
+          ? "Đã dừng. Run này đã chết từ trước nên được kết thúc và mở khoá ngay."
+          : "Đang dừng — chờ bước đang chạy dở kết thúc. Lời gọi AI đang chạy không thu hồi được.",
     );
   }
 

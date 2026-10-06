@@ -117,6 +117,7 @@ Hiện "ai làm" đang nằm lồng trong `detail` dưới ba tên khác nhau (`
 | `PROCESS_STOP_REQUESTED` | Bấm Dừng một run đang chạy | ✅ |
 | `PROJECT_DELETE_STARTED` | Bắt đầu xoá project — ghi trước khi xoá | ✅ |
 | `PROJECT_DELETED` | Xoá project xong, kèm số lượng đã xoá | ✅ |
+| `PROCESS_RUN_UNSTUCK` | Bấm Dừng trên run đã chết — run được kết thúc và nhả khoá ngay | ✅ |
 
 ## 5. Metric AI (EMF)
 

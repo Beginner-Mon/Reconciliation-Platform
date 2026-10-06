@@ -1,4 +1,9 @@
-from common.audit import log_edit_overwritten, log_process_decision, log_process_stop_requested
+from common.audit import (
+    log_edit_overwritten,
+    log_process_decision,
+    log_process_run_unstuck,
+    log_process_stop_requested,
+)
 from common.dynamodb import (
     RUNS_TABLE,
     claim_processing_run,
@@ -13,7 +18,7 @@ from common.errors import BadRequest, Conflict
 from common.ids import new_run_id, now_iso
 from common.s3 import head_object
 from common import ocr_engines
-from common.stepfunctions import start_execution
+from common.stepfunctions import execution_is_running, start_execution
 from common.reconcile_client import invoke_reconcile
 
 from .http import json_response
@@ -330,22 +335,37 @@ def stop_processing(params: dict, body: dict, user: str) -> dict:
     if not run_id:
         raise Conflict("Project không có run nào đang chạy")
 
-    requested_at = now_iso()
     newly_requested = update_item(
         RUNS_TABLE,
         {"run_id": run_id},
-        {"cancel_requested_at": requested_at, "cancel_requested_by": user},
+        {"cancel_requested_at": now_iso(), "cancel_requested_by": user},
         condition="attribute_exists(run_id) AND attribute_not_exists(cancel_requested_at)",
     )
+    run = get_item(RUNS_TABLE, {"run_id": run_id})
+    if run is None:
+        raise Conflict("Run đang khởi động, bấm Dừng lại sau giây lát")
     if newly_requested:
         log_process_stop_requested(project_id, {"run_id": run_id}, actor=user, source="api")
-    else:
-        run = get_item(RUNS_TABLE, {"run_id": run_id})
-        if run is None:
-            raise Conflict("Run đang khởi động, bấm Dừng lại sau giây lát")
-        requested_at = run.get("cancel_requested_at")
 
-    return json_response(
-        {"project_id": project_id, "run_id": run_id, "cancel_requested_at": requested_at},
-        202,
-    )
+    result = {
+        "project_id": project_id,
+        "run_id": run_id,
+        "cancel_requested_at": run.get("cancel_requested_at"),
+    }
+
+    execution_arn = run.get("execution_arn")
+    if (
+        run.get("status") == "PROCESSING"
+        and execution_arn
+        and not execution_is_running(execution_arn)
+    ):
+        invoke_reconcile(project_id, run_id)
+        log_process_run_unstuck(
+            project_id,
+            {"run_id": run_id, "execution_arn": execution_arn},
+            actor=user,
+            source="api",
+        )
+        return json_response({**result, "status": "CANCELLED"})
+
+    return json_response({**result, "status": "STOPPING"}, 202)
