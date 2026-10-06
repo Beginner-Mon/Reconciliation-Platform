@@ -1023,3 +1023,41 @@ def test_khong_con_poc_user_trong_backend():
         if "poc-user" in p.read_text(encoding="utf-8"):
             found.append(str(p))
     assert not found, f"còn poc-user trong: {found}"
+
+
+def _doi_chieu_qua_lambda_nhu_tren_cloud(project_id: str) -> dict:
+    from workers.reconcile import lambda_handler
+
+    return json.loads(json.dumps(lambda_handler({"project_id": project_id}, None)))
+
+
+def test_process_khong_con_gi_de_xu_ly_dung_duoc_ket_qua_cua_lambda_that(
+    aws, started_executions, monkeypatch
+):
+    monkeypatch.setattr("api.process.invoke_reconcile", _doi_chieu_qua_lambda_nhu_tren_cloud)
+    project_id = make_project()
+    po, inv = add_documents(project_id, "PO.pdf", "INV.pdf")
+    mark_processed(po["document_id"], PO_DATA)
+    mark_processed(inv["document_id"], INVOICE_DATA)
+
+    status, body = call("POST", f"/projects/{project_id}/process")
+
+    assert status == 200
+    assert body["run_id"] is None
+    assert "severity_summary" in body["reconciliation"]
+    assert started_executions == []
+
+
+def test_reconcile_endpoint_tra_ban_ghi_day_du_voi_ket_qua_cua_lambda_that(aws, monkeypatch):
+    monkeypatch.setattr("api.reconcile.invoke_reconcile", _doi_chieu_qua_lambda_nhu_tren_cloud)
+    project_id = make_project()
+    po, inv = add_documents(project_id, "PO.pdf", "INV.pdf")
+    mark_processed(po["document_id"], PO_DATA)
+    mark_processed(inv["document_id"], INVOICE_DATA)
+
+    status, body = call("POST", f"/projects/{project_id}/reconcile")
+
+    assert status == 200
+    assert body["status"] == "PENDING_REVIEW"
+    assert sorted(body["document_ids"]) == sorted([po["document_id"], inv["document_id"]])
+    assert body["is_stale"] is False

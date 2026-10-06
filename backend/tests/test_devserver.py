@@ -449,3 +449,13 @@ def test_setup_ai_textract_thieu_bucket_thi_thoat(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         entry.setup_ai("textract")
     assert exc.value.code == 2
+
+
+def test_devserver_nhan_moi_method_ma_route_dung():
+    from api import handler
+    from devserver.http_server import PREFLIGHT_HEADERS, DevHandler
+
+    cho_phep = {m.strip() for m in PREFLIGHT_HEADERS["Access-Control-Allow-Methods"].split(",")}
+    for method in sorted({method for method, _, _ in handler.ROUTES}):
+        assert hasattr(DevHandler, f"do_{method}"), f"dev server không nhận {method}"
+        assert method in cho_phep, f"preflight không cho {method}"

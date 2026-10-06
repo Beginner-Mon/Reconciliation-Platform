@@ -147,6 +147,23 @@ export function ProjectDetail() {
       return;
     }
 
+    const seChay = data.documents.filter(
+      (d) =>
+        d.status !== "VALIDATED" &&
+        d.status !== "EXTRACTED" &&
+        (d.edited_fields ?? []).length === 0,
+    );
+    if (
+      chon.length === 0 &&
+      seChay.length > 1 &&
+      !window.confirm(
+        `Chưa tích chọn chứng từ nào — sẽ xử lý TẤT CẢ ${seChay.length} chứng từ chưa chạy bằng ${engine}.\n\n` +
+          `Mỗi chứng từ gọi AI thật và tốn tiền. Tiếp tục?`,
+      )
+    ) {
+      return;
+    }
+
     setShowWorkflow(true);
     await run(
       async () => {

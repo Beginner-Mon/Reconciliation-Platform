@@ -136,20 +136,22 @@ def lambda_handler(event: dict, context) -> dict:
 
     record = run_reconciliation(project_id)
 
-    if run_id:
-        update_item(
-            RUNS_TABLE,
-            {"run_id": run_id},
-            {
-                "status": "SUCCEEDED",
-                "finished_at": now_iso(),
-                "reconciliation_id": record["reconciliation_id"],
-            },
-        )
-        update_item(
-            PROJECTS_TABLE, {"project_id": project_id}, {"last_run_id": run_id}
-        )
-        release_processing_run(project_id)
+    if not run_id:
+        return record
+
+    update_item(
+        RUNS_TABLE,
+        {"run_id": run_id},
+        {
+            "status": "SUCCEEDED",
+            "finished_at": now_iso(),
+            "reconciliation_id": record["reconciliation_id"],
+        },
+    )
+    update_item(
+        PROJECTS_TABLE, {"project_id": project_id}, {"last_run_id": run_id}
+    )
+    release_processing_run(project_id)
 
     return {
         "project_id": project_id,

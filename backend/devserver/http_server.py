@@ -15,7 +15,7 @@ from api.handler import lambda_handler
 
 PREFLIGHT_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "content-type",
     "Access-Control-Max-Age": "600",
 }
@@ -70,7 +70,7 @@ class DevHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self._send(204, PREFLIGHT_HEADERS, "")
 
-    do_GET = do_POST = do_PATCH = do_DELETE = _dispatch
+    do_GET = do_POST = do_PATCH = do_PUT = do_DELETE = _dispatch
 
 
 def serve(host: str, port: int, quiet: bool = False) -> ThreadingHTTPServer:

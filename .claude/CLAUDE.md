@@ -304,6 +304,17 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   `projects/prj-1` nuốt cả `projects/prj-10…`, rỗng thì xoá cả bucket. Quyết định
   "không discover S3 bằng `ListObjectsV2`" (§4) nói về đường NHẬP file; liệt kê để
   XOÁ là ngoại lệ có chủ đích, và `s3:ListBucket` chỉ cấp cho role `api-projects`.
+- **Lambda reconcile trả BẢN GHI ĐẦY ĐỦ khi event không có `run_id`** (đường API
+  gọi qua `invoke_reconcile`), và chỉ trả bản tóm tắt cho Step Functions. Trước
+  đây nó luôn trả tóm tắt, nên trên cloud `/process` ở nhánh "không còn gì để xử
+  lý" chết vì thiếu `severity_summary` và `/reconcile` trả bản ghi thiếu
+  `status`/`document_ids`. Dev và test không lộ vì `invoke_reconcile` được vá
+  thành `run_reconciliation` — test mới gọi thẳng `lambda_handler` qua một vòng
+  `json.dumps`/`loads` để giữ đúng hợp đồng của cloud.
+- **Dev server phải nhận mọi HTTP method có trong `handler.ROUTES`**
+  (`do_<METHOD>` và `Access-Control-Allow-Methods`). Thiếu `PUT` thì
+  `PUT /anchor` ở localhost trả 501 trong khi cloud chạy bình thường. Đã có test
+  chặn.
 
 ## 6. Thêm loại chứng từ mới
 
