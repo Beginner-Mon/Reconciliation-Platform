@@ -167,7 +167,7 @@ Cờ `--upload` tạo sẵn project và upload sẵn file trong thư mục — *
 không gọi AI**. Lưu ý `evaluation/dataset/documents/` **đã gitignore** nên rỗng
 khi mới clone: bỏ cờ này đi, hoặc tự bỏ file `.pdf` / `.png` / `.jpg` vào đó.
 
-Mô tả 4 tab của giao diện và cơ chế polling:
+Mô tả 3 tab của giao diện và cơ chế polling:
 [frontend/README.md](frontend/README.md).
 
 ---

@@ -29,6 +29,8 @@ tính chất này là sai.
 [2] POST /projects/{id}/process     -> user chủ động; SKIP doc đã VALIDATED
 [3] POST /projects/{id}/reconcile   -> deterministic, KHÔNG đụng AI, gọi lại thoải mái
 [4] Human Review                    -> API độc lập, KHÔNG nằm trong Step Functions
+[5] POST /projects/{id}/process/stop -> đặt CỜ dừng trên run; KHÔNG gọi Step Functions
+[6] DELETE /projects/{id}            -> xoá hẳn project; đang chạy thì 409
 ```
 
 Full API surface: `docs/iac-plan.md` §3. Kịch bản chạy thật: `infra/README.md` §7.
@@ -252,6 +254,56 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 - **Script `.ps1` có ký tự ngoài ASCII phải có BOM UTF-8**. PowerShell 5.1
   đọc file không BOM theo codepage hệ thống (máy này là 1252); dấu `—` trong
   chuỗi có thể thành `”` và làm vỡ cú pháp.
+- **`view_url` được ký lại mỗi lần `GET /projects/{id}`** nên `DocumentViewer`
+  giữ URL theo `document_id` (`urlOnDinh`); gỡ đi thì mỗi lần Lưu/refresh PDF
+  tải lại về trang 1. Frontend chưa có test nên không có gì chặn — đừng gỡ khi
+  chưa chạy tay mục B.7.
+- **Output Gemini được làm sạch ở `workers/extract.py` trước khi lưu**
+  (`core/normalize.py:clean_extraction`), bản thô còn nguyên ở
+  `extraction_s3_key`. Chỉ gỡ trường vô hướng ở gốc, mỗi mục thành cờ
+  `ai_format`; `other_fields`/ô bảng/khoá lạ chỉ đổi hình dạng, không ghi nhận.
+  Đường sửa tay (`api/review.py`) không được cứu — người nhập sai kiểu vẫn
+  `FAILED`. Quá 10 trường bị gỡ (`MAX_GO`) thì trả nguyên để `FAILED` như cũ.
+- **Đo lỗi định dạng bằng `evaluation/measure_format.py`, không đánh giá bằng
+  demo tay.** `capture --from-devserver` giữ output RAM (miễn phí),
+  `capture --engine` tốn tiền Gemini (Ngài chạy), `report [--khong-cuu]` chấm
+  `hỏng X/N` trên cùng snapshot. Đáp án ô bảng ở
+  `dataset/ground_truth_tables/` (định dạng khác `ground_truth/` của spike).
+
+- **Dừng run bằng CỜ, không bằng `StopExecution`.** `POST /process/stop` chỉ ghi
+  `cancel_requested_at` lên record run; worker `ocr`/`extract` kiểm cờ TRƯỚC
+  `begin_step` và trả `{..., "skipped": "cancelled"}`. `StopExecution` không giết
+  Lambda đang chạy (vẫn tốn tiền, vẫn ghi DynamoDB sau khi "dừng") và không chạy
+  `Catch`, nên `processing_run_id` sẽ kẹt; dev server chạy run bằng thread cũng
+  không abort được. Với cờ, run đi hết đường kết thúc sẵn có và `Reconcile` nhả
+  khoá. Giới hạn: lời gọi AI đang bay (tối đa `MaxConcurrency` = 3 chứng từ)
+  không thu hồi được.
+- **`validate` KHÔNG kiểm cờ dừng**, chỉ tôn trọng `event["skipped"]`. Nó không
+  tốn tiền, và chứng từ `EXTRACTED` mà không validate sẽ bị `/process` coi là đã
+  xong mãi mãi (`PROCESSED_STATUSES`).
+- **`status_before_run` do `api/process.py` ghi lúc xếp hàng, worker chỉ đọc.**
+  Run bị dừng thì `workers/reconcile.py` trả chứng từ chưa kịp chạy về trạng thái
+  đó. Thiếu nó, "chạy lại N chứng từ đã xong" rồi bấm Dừng để lại N chứng từ
+  `PENDING`, và lần "Xử lý tất cả" kế tiếp trả tiền lại hết. Bộ
+  `PROCESSED_STATUSES` vẫn chỉ nằm ở `api/views.py`.
+- **Run bị dừng KHÔNG tự đối chiếu.** Kết quả cũ thành `is_stale`; người dùng bấm
+  "Đối chiếu lại".
+- **Lambda reconcile chỉ nhả khoá khi event có `run_id`.** `POST /reconcile` gọi
+  chung handler đó mà không có `run_id`; nhả vô điều kiện là mở khoá của run đang chạy.
+- **Xoá project theo đúng thứ tự: cờ `deleting_at` (conditional) → record
+  documents/reconciliations/runs → S3 → record project.** Record project xoá SAU
+  CÙNG nên hỏng giữa chừng thì bấm xoá lại là xong. Record trước S3 vì
+  `GET /projects/{id}` hydrate chứng từ từ S3 — mất file trước là 500. Gom id
+  chứng từ bằng `query_document_names_by_project` (không hydrate), KHÔNG dùng
+  `query_documents_by_project`.
+- **`claim_processing_run` có điều kiện `attribute_not_exists(deleting_at)`**, và
+  `delete_project` có điều kiện `attribute_not_exists(processing_run_id)`. Hai
+  conditional write trên cùng một item mới loại trừ nhau thật; kiểm bằng `if`
+  trong handler thì bị race.
+- **`delete_prefix` bắt buộc prefix kết thúc bằng `/`.** Thiếu thì
+  `projects/prj-1` nuốt cả `projects/prj-10…`, rỗng thì xoá cả bucket. Quyết định
+  "không discover S3 bằng `ListObjectsV2`" (§4) nói về đường NHẬP file; liệt kê để
+  XOÁ là ngoại lệ có chủ đích, và `s3:ListBucket` chỉ cấp cho role `api-projects`.
 
 ## 6. Thêm loại chứng từ mới
 

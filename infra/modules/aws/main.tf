@@ -299,7 +299,9 @@ locals {
   #
   #   `sfn = true` CHỈ ở process: `states:StartExecution` là quyền TIÊU TIỀN AI, và
   #     trong toàn backend chỉ api/process.py:143 gọi nó.
-  #   `Scan` CHỈ ở projects: chỉ api/projects.py:45 (list_projects) dùng scan_table.
+  #   `Scan` CHỈ ở projects: list_projects quét bảng projects; delete_project quét
+  #     processing_runs và reconciliations theo project_id (hai bảng không có GSI).
+  #   `s3_list` CHỈ ở projects: xoá project dọn mọi object dưới projects/{id}/.
   #   KHÔNG function nào cần secretsmanager — chỉ worker ocr/extract đọc key Google.
   #   `s3:GetObject` cần cho cả presigned GET (create_view_url) và head_object;
   #     `s3:PutObject` cần cho presigned POST upload. Ký URL không gọi API, nhưng
@@ -309,8 +311,9 @@ locals {
       handler  = "api.handler.projects_handler"
       timeout  = 30
       memory   = 512
-      dynamodb = ["GetItem", "Query", "Scan", "PutItem"]
-      s3       = ["GetObject"]
+      dynamodb = ["GetItem", "Query", "Scan", "PutItem", "UpdateItem", "DeleteItem"]
+      s3       = ["GetObject", "DeleteObject"]
+      s3_list  = true
       sfn      = false
       # Đối chiếu chạy ở MỘT Lambda duy nhất (recon-reconcile). Chỉ hai function
       # dưới đây có đường dẫn tới nó: `review` phục vụ POST /reconcile, `process`
@@ -325,6 +328,7 @@ locals {
       # PutObject: presigned POST ký bằng quyền của chính role này.
       # DeleteObject: xoá chứng từ (P1) — bucket có versioning nên tạo delete marker, khôi phục 30 ngày.
       s3               = ["GetObject", "PutObject", "DeleteObject"]
+      s3_list          = false
       sfn              = false
       invoke_reconcile = true
     }
@@ -336,6 +340,7 @@ locals {
       # KHÔNG còn PutObject: sau khi đối chiếu dời sang Lambda riêng, không
       # đường nào ở đây ghi S3 nữa — chỉ đọc file kết quả đối chiếu.
       s3               = ["GetObject"]
+      s3_list          = false
       sfn              = false
       invoke_reconcile = true
     }
@@ -346,6 +351,7 @@ locals {
       dynamodb = ["GetItem", "Query", "PutItem", "UpdateItem"]
       # KHÔNG còn PutObject: chỉ head_object để kiểm file đã upload chưa.
       s3               = ["GetObject"]
+      s3_list          = false
       sfn              = true
       invoke_reconcile = true
     }
@@ -355,6 +361,7 @@ locals {
       memory           = 512
       dynamodb         = ["GetItem", "Query", "UpdateItem"]
       s3               = ["GetObject"]
+      s3_list          = false
       sfn              = false
       invoke_reconcile = true
     }
@@ -437,6 +444,14 @@ resource "aws_iam_policy" "api" {
           Effect   = "Allow"
           Action   = ["lambda:InvokeFunction"]
           Resource = [aws_lambda_function.worker["reconcile"].arn]
+        },
+      ] : [],
+      each.value.s3_list ? [
+        {
+          Effect    = "Allow"
+          Action    = ["s3:ListBucket"]
+          Resource  = [aws_s3_bucket.documents.arn]
+          Condition = { StringLike = { "s3:prefix" = ["projects/*"] } }
         },
       ] : [],
       each.value.sfn ? [
@@ -811,6 +826,7 @@ locals {
     "POST /projects"                                         = "projects"
     "GET /projects"                                          = "projects"
     "GET /projects/{project_id}"                             = "projects"
+    "DELETE /projects/{project_id}"                          = "projects"
     "POST /projects/{project_id}/documents"                  = "documents"
     "GET /projects/{project_id}/documents"                   = "documents"
     "GET /projects/{project_id}/documents/{document_id}/ocr" = "documents"
@@ -821,6 +837,7 @@ locals {
     "POST /reconciliations/{reconciliation_id}/review"       = "review"
     "PUT /projects/{project_id}/anchor"                      = "anchor"
     "POST /projects/{project_id}/process"                    = "process"
+    "POST /projects/{project_id}/process/stop"               = "process"
   }
 }
 

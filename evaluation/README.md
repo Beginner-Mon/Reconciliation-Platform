@@ -323,6 +323,36 @@ formparser_gemini            93.8%    95.2%    100.0%   0.06340       9.1
 
 Chi tiết từng tài liệu ở `results/<luồng>.json`.
 
+## Đo lỗi định dạng output Gemini (không phải lỗi OCR)
+
+`measure_format.py` trả lời câu khác với spike trên: **Gemini trích đúng
+schema hay không**, bất kể OCR đọc đúng hay sai. Dùng khi nhiều chứng từ
+`FAILED` ở bước validate trong khi lỗi thật nằm ở output của extract.
+
+```powershell
+cd evaluation
+
+# Giữ output thô đang nằm trong RAM dev server (MIỄN PHÍ, làm trước khi tắt server)
+..\backend\.venv\Scripts\python.exe measure_format.py capture --from-devserver http://127.0.0.1:8000/projects/<project_id> --nhan <nhan>
+
+# Chạy lại từ file gốc qua Gemini (TỐN TIỀN — để Ngài chạy, agent không chạy)
+..\backend\.venv\Scripts\python.exe measure_format.py capture --engine textract --nhan <nhan>
+
+# Chấm snapshot: validate từng chứng từ, đếm cờ theo mã, chấm ô bảng (MIỄN PHÍ)
+..\backend\.venv\Scripts\python.exe measure_format.py report results\format-snapshots\<nhan>.json --khong-cuu
+..\backend\.venv\Scripts\python.exe measure_format.py report results\format-snapshots\<nhan>.json
+```
+
+`--khong-cuu` bỏ qua `clean_extraction` (hoặc khi hàm chưa tồn tại) — chênh
+lệch giữa hai lần `report` chính là số chứng từ được cứu khỏi `FAILED`.
+Snapshot ghi vào `results/format-snapshots/` (đã gitignore, dùng local).
+
+Đáp án chấm ô bảng nằm ở `dataset/ground_truth_tables/<tên file không đuôi>.json`
+(thư mục mới — `ground_truth/` thuộc `run_spike.py` với định dạng khác, không
+dùng chung). Hiện có một file cho hoá đơn Golden Gate: 7 dòng × 5 cột số, nhận
+cột theo tiêu đề bỏ dấu (vd `discount` là cột chứa `chiet khau`). Trống, `null`
+và `0` coi là bằng nhau; còn lại so số qua `scoring.normalize`.
+
 ## Quyết định thế nào
 
 Mốc là `formparser_gemini` (luồng hiện tại). Nhìn **`field_hay_sai`** chứ không

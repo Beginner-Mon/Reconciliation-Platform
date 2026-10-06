@@ -124,3 +124,30 @@ def delete_object(key: str) -> None:
         if exc.response["Error"]["Code"] in {"404", "NoSuchKey", "NotFound", "NoSuchBucket"}:
             return
         raise
+
+
+def delete_prefix(prefix: str, page_size: int = 1000) -> int:
+    if not prefix.endswith("/"):
+        raise ValueError(f"Prefix phải kết thúc bằng '/': {prefix!r}")
+
+    deleted = 0
+    paginator = get_s3().get_paginator("list_objects_v2")
+    pages = paginator.paginate(
+        Bucket=BUCKET, Prefix=prefix, PaginationConfig={"PageSize": page_size}
+    )
+    for page in pages:
+        keys = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+        if not keys:
+            continue
+        response = get_s3().delete_objects(
+            Bucket=BUCKET, Delete={"Objects": keys, "Quiet": True}
+        )
+        errors = response.get("Errors") or []
+        if errors:
+            first = errors[0]
+            raise RuntimeError(
+                f"Không xoá được {len(errors)} object dưới {prefix}: "
+                f"{first.get('Key')} ({first.get('Code')})"
+            )
+        deleted += len(keys)
+    return deleted

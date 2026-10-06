@@ -141,7 +141,7 @@ export function EditPanel({ document, onSaved }: Props) {
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 @md:grid-cols-2">
         {scalarKeys.map((key) => {
           const conf = confidence[key];
           const low = typeof conf === "number" && conf < LOW_CONFIDENCE;

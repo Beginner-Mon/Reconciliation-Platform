@@ -127,6 +127,8 @@ POST   /projects/{id}/documents                   xin presigned POST URL
 GET    /projects/{id}/documents/{doc_id}/ocr      text OCR thô + confidence từng dòng
 GET    /projects/{id}/documents                   danh sách document
 POST   /projects/{id}/process                     chạy xử lý (skip doc đã xong)
+POST   /projects/{id}/process/stop                dừng run đang chạy (đặt cờ, không gọi AI thêm)
+DELETE /projects/{id}                             xoá hẳn project (đang chạy -> 409)
 POST   /projects/{id}/reconcile                   đối chiếu lại
 PATCH  /projects/{id}/documents/{doc_id}          sửa tay + đối chiếu lại
 GET    /reconciliations/{id}                      kết quả đối chiếu đầy đủ

@@ -95,7 +95,28 @@ def _migrate_legacy(data: dict) -> dict:
     return new_data
 
 
-def validate_document(data: dict) -> dict:
+class _LoiDung(Exception):
+    def __init__(self, loi):
+        super().__init__("; ".join(loi))
+        self.loi = loi
+
+
+def _dung_model(data):
+    loai = data.get("document_type")
+    schema = model_for(loai) if isinstance(loai, str) else None
+    if schema is None:
+        raise _LoiDung([f"document_type không được hỗ trợ: {loai} (hỗ trợ: {', '.join(supported_types())})"])
+    migrated = _migrate_legacy(dict(data))
+    if "shipping_amount" in migrated:
+        migrated = {**migrated, "other_fields": dict(migrated.get("other_fields") or {})}
+        value = migrated.pop("shipping_amount")
+        if value is not None:
+            migrated["other_fields"].setdefault("shipping_amount", str(value))
+    truncated, warnings = enforce_limits(migrated)
+    return schema.model_validate(truncated), warnings
+
+
+def validate_document(data, format_issues=None):
     result = {"valid": False, "document_type": None, "model": None,
               "schema_errors": [], "rule_errors": [], "warnings": [], "flags": [],
               "comparison_incomplete": False}
@@ -104,28 +125,27 @@ def validate_document(data: dict) -> dict:
         return result
     document_type = data.get("document_type")
     result["document_type"] = document_type
-    schema = model_for(document_type) if isinstance(document_type, str) else None
-    if schema is None:
-        result["schema_errors"] = [f"document_type không được hỗ trợ: {document_type} (hỗ trợ: {', '.join(supported_types())})"]
-        return result
     try:
-        migrated = _migrate_legacy(dict(data))
-        if "shipping_amount" in migrated:
-            migrated = {**migrated, "other_fields": dict(migrated.get("other_fields") or {})}
-            value = migrated.pop("shipping_amount")
-            if value is not None:
-                migrated["other_fields"].setdefault("shipping_amount", str(value))
-        truncated, warnings = enforce_limits(migrated)
-        result["warnings"] = warnings
-        model = schema.model_validate(truncated)
+        model, warnings = _dung_model(data)
     except ValidationError as exc:
         result["schema_errors"] = [f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()]
+        return result
+    except _LoiDung as exc:
+        result["schema_errors"] = exc.loi
         return result
     except (ValueError, TypeError, AttributeError) as exc:
         result["schema_errors"] = [f"Cấu trúc dữ liệu không hợp lệ: {exc}"]
         return result
     result.update(valid=True, model=model, comparison_incomplete=bool(warnings))
-    result["flags"] = business_flags(model, incomplete=bool(warnings))
+    result["warnings"] = warnings
+    co = business_flags(model, incomplete=bool(warnings))
+    for muc in format_issues or []:
+        truong = muc.get("field") if isinstance(muc, dict) else None
+        if truong:
+            co.append({"code": "ai_format", "field": truong,
+                       "message": f"AI trả {truong} sai định dạng nên đã bỏ trống — xem chứng từ gốc và nhập lại",
+                       "values": {"gia_tri_goc": muc.get("value")}, "formula": None})
+    result["flags"] = co
     return result
 
 

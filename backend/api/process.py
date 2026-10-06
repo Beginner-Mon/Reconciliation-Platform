@@ -1,7 +1,8 @@
-from common.audit import log_edit_overwritten, log_process_decision
+from common.audit import log_edit_overwritten, log_process_decision, log_process_stop_requested
 from common.dynamodb import (
     RUNS_TABLE,
     claim_processing_run,
+    get_item,
     put_item,
     query_documents_by_project,
     release_processing_run,
@@ -156,7 +157,9 @@ def _verify_uploaded(document: dict) -> dict:
 
 def process_project(params: dict, body: dict, user: str) -> dict:
     project_id = params["project_id"]
-    must_get_project(project_id)
+    project = must_get_project(project_id)
+    if project.get("deleting_at"):
+        raise Conflict("Project đang bị xoá dở — bấm xoá lại để hoàn tất")
 
     documents = query_documents_by_project(project_id)
     if not documents:
@@ -266,9 +269,11 @@ def process_project(params: dict, body: dict, user: str) -> dict:
     _audit_overwrites(project_id, run_id, targets, user)
 
     for document, head in verified:
+        previous = document.get("status")
         update_document(
             document["document_id"],
             status="PENDING",
+            status_before_run=previous if previous in PROCESSED_STATUSES else None,
             step=None,
             step_status=None,
             attempt=0,
@@ -313,5 +318,34 @@ def process_project(params: dict, body: dict, user: str) -> dict:
             "processing": [document_view(d) for d in targets],
             "skipped": skipped,
         },
+        202,
+    )
+
+
+def stop_processing(params: dict, body: dict, user: str) -> dict:
+    project_id = params["project_id"]
+    project = must_get_project(project_id)
+
+    run_id = project.get("processing_run_id")
+    if not run_id:
+        raise Conflict("Project không có run nào đang chạy")
+
+    requested_at = now_iso()
+    newly_requested = update_item(
+        RUNS_TABLE,
+        {"run_id": run_id},
+        {"cancel_requested_at": requested_at, "cancel_requested_by": user},
+        condition="attribute_exists(run_id) AND attribute_not_exists(cancel_requested_at)",
+    )
+    if newly_requested:
+        log_process_stop_requested(project_id, {"run_id": run_id}, actor=user, source="api")
+    else:
+        run = get_item(RUNS_TABLE, {"run_id": run_id})
+        if run is None:
+            raise Conflict("Run đang khởi động, bấm Dừng lại sau giây lát")
+        requested_at = run.get("cancel_requested_at")
+
+    return json_response(
+        {"project_id": project_id, "run_id": run_id, "cancel_requested_at": requested_at},
         202,
     )

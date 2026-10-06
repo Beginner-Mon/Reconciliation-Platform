@@ -6,7 +6,7 @@ from common.errors import RateLimitError
 from common.s3 import ocr_key, read_object, write_json
 from common import ocr_engines
 
-from .steps import begin_step, finish_step
+from .steps import SKIPPED_CANCELLED, begin_step, finish_step, run_cancel_requested
 
 MIME_BY_EXT = {
     "pdf": "application/pdf",
@@ -41,6 +41,9 @@ def _engine_name(event: dict) -> str:
 
 
 def lambda_handler(event: dict, context) -> dict:
+    if run_cancel_requested(event.get("run_id")):
+        return {**event, "skipped": SKIPPED_CANCELLED}
+
     project_id = event["project_id"]
     document_id = event["document_id"]
     s3_key = event["s3_key"]

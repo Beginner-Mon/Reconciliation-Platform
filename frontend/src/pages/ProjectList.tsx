@@ -1,4 +1,4 @@
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
@@ -10,6 +10,7 @@ export function ProjectList() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -37,6 +38,26 @@ export function ProjectList() {
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function remove(project: Project) {
+    const soChungTu = project.document_count ?? 0;
+    if (
+      !window.confirm(
+        `Xoá project "${project.name}" cùng ${soChungTu} chứng từ, kết quả đối chiếu và lịch sử duyệt?\n\nKhông hoàn tác được trên giao diện.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingId(project.project_id);
+    try {
+      await api.deleteProject(project.project_id);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -89,16 +110,41 @@ export function ProjectList() {
         ) : (
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
-              <Link
+              <div
                 key={project.project_id}
-                to={`/projects/${project.project_id}`}
                 className="flex min-h-24 items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-sky-300 hover:shadow-sm"
               >
-                <span className="font-medium text-slate-800">{project.name}</span>
-                {project.processing_run_id && (
-                  <Loader2 size={18} className="shrink-0 animate-spin text-sky-600" />
-                )}
-              </Link>
+                <Link to={`/projects/${project.project_id}`} className="min-w-0 flex-1 self-stretch">
+                  <span className="block font-medium text-slate-800">{project.name}</span>
+                  {project.deleting_at && (
+                    <span className="mt-1 block text-xs text-red-600">xoá dở — bấm xoá lại</span>
+                  )}
+                </Link>
+                <span className="flex shrink-0 items-center gap-1">
+                  {project.processing_run_id && (
+                    <Loader2 size={18} className="animate-spin text-sky-600" />
+                  )}
+                  <button
+                    onClick={() => remove(project)}
+                    disabled={
+                      Boolean(project.processing_run_id) || deletingId === project.project_id
+                    }
+                    title={
+                      project.processing_run_id
+                        ? "Project đang chạy xử lý — dừng run trước khi xoá"
+                        : `Xoá project ${project.name}`
+                    }
+                    aria-label={`Xoá project ${project.name}`}
+                    className="flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                  >
+                    {deletingId === project.project_id ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={15} />
+                    )}
+                  </button>
+                </span>
+              </div>
             ))}
           </div>
         )}

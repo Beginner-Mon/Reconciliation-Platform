@@ -9,11 +9,17 @@ from common.errors import RateLimitError
 from common.s3 import extraction_key, read_json, write_json
 
 from core import check_grounding
+from core.normalize import clean_extraction
 
-from .steps import begin_step, finish_step
+from .steps import SKIPPED_CANCELLED, begin_step, finish_step, run_cancel_requested
 
 
 def lambda_handler(event: dict, context) -> dict:
+    if event.get("skipped"):
+        return event
+    if run_cancel_requested(event.get("run_id")):
+        return {**event, "skipped": SKIPPED_CANCELLED}
+
     project_id = event["project_id"]
     document_id = event["document_id"]
 
@@ -68,6 +74,8 @@ def lambda_handler(event: dict, context) -> dict:
     key = extraction_key(project_id, document_id)
     write_json(key, extracted)
 
+    data, format_issues = clean_extraction(data)
+
     # Neo output của LLM về nguồn: giá trị nào không tìm thấy trong text OCR thì
     # nhiều khả năng bị bịa. CẢNH BÁO chứ không chặn — giá trị suy ra (subtotal
     # tính từ line items) có thể không xuất hiện nguyên văn mà vẫn đúng.
@@ -82,6 +90,7 @@ def lambda_handler(event: dict, context) -> dict:
         "extraction_s3_key": key,
         "extraction": data,
         "confidence": confidence,
+        "format_issues": format_issues,
         "document_type": document_type,
         "role": data.get("role") or "other",
         "ungrounded_fields": ungrounded,

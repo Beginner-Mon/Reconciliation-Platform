@@ -112,6 +112,14 @@ def test_prompt_dat_unknown_o_CUOI_va_kem_dieu_kien():
     assert "KHÔNG khớp bất kỳ loại nào ở trên" in prompt
 
 
+def test_prompt_khoa_dinh_dang_kieu_du_lieu():
+    prompt = build_extraction_prompt("nội dung OCR")
+    assert 'không ghi chuỗi "null"' in prompt
+    assert "không trả mảng" in prompt
+    assert "other_fields luôn là chuỗi" in prompt
+    assert "luôn là YYYY-MM-DD" in prompt
+
+
 def test_gemini_key_uu_tien_env_truoc_secret(monkeypatch):
     """Env thắng secret — devserver và evaluation vẫn chạy bằng evaluation/.env."""
     import common.ai_clients as ai

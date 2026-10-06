@@ -3,17 +3,20 @@ from common.dynamodb import (
     PROJECTS_TABLE,
     RECONCILIATIONS_TABLE,
     RUNS_TABLE,
+    get_item,
     put_item,
     query_documents_by_project,
     release_processing_run,
+    update_document,
     update_item,
 )
 from common.ids import new_reconciliation_id, now_iso
 from common.s3 import reconciliation_key, write_json
 from core import run_crosscheck
 
+from .steps import run_cancel_requested
+
 def run_reconciliation(project_id: str) -> dict:
-    from common.dynamodb import get_item
 
     documents = query_documents_by_project(project_id)
     project = get_item(PROJECTS_TABLE, {"project_id": project_id}) or {}
@@ -70,9 +73,66 @@ def run_reconciliation(project_id: str) -> dict:
     return record
 
 
+def _finish_cancelled_run(project_id: str, run_id: str) -> dict:
+    run = get_item(RUNS_TABLE, {"run_id": run_id}) or {}
+    run_document_ids = set(run.get("document_ids") or [])
+    finished, not_started, interrupted = [], [], []
+
+    for document in query_documents_by_project(project_id):
+        document_id = document["document_id"]
+        if document_id not in run_document_ids:
+            continue
+        status = document.get("status")
+        if status in ("VALIDATED", "FAILED"):
+            finished.append(document_id)
+        elif status == "PENDING":
+            not_started.append(document_id)
+            before = document.get("status_before_run")
+            if before:
+                update_document(document_id, status=before, updated_at=now_iso())
+        else:
+            interrupted.append(document_id)
+            update_document(
+                document_id,
+                status="PENDING",
+                step=None,
+                step_status=None,
+                updated_at=now_iso(),
+            )
+
+    update_item(
+        RUNS_TABLE,
+        {"run_id": run_id},
+        {"status": "CANCELLED", "finished_at": now_iso()},
+    )
+    update_item(
+        PROJECTS_TABLE,
+        {"project_id": project_id},
+        {"last_run_id": run_id, "updated_at": now_iso()},
+    )
+    release_processing_run(project_id)
+    log_pipeline_step(
+        project_id,
+        "run",
+        "cancelled",
+        {
+            "run_id": run_id,
+            "finished": finished,
+            "not_started": not_started,
+            "interrupted": interrupted,
+        },
+        source="worker",
+        project_id=project_id,
+    )
+    return {"project_id": project_id, "run_id": run_id, "status": "CANCELLED"}
+
+
 def lambda_handler(event: dict, context) -> dict:
     project_id = event["project_id"]
     run_id = event.get("run_id")
+
+    if run_cancel_requested(run_id):
+        return _finish_cancelled_run(project_id, run_id)
 
     record = run_reconciliation(project_id)
 
@@ -89,7 +149,7 @@ def lambda_handler(event: dict, context) -> dict:
         update_item(
             PROJECTS_TABLE, {"project_id": project_id}, {"last_run_id": run_id}
         )
-    release_processing_run(project_id)
+        release_processing_run(project_id)
 
     return {
         "project_id": project_id,

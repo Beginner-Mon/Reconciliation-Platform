@@ -81,7 +81,7 @@ Mỗi Lambda `api` một role riêng, quyền cắt theo đúng việc nó làm
 
 | Role | dynamodb | s3 | states | lambda:InvokeFunction |
 |---|---|---|---|---|
-| `api-projects` | GetItem, Query, **Scan**, PutItem | GetObject | — | — |
+| `api-projects` | GetItem, Query, **Scan**, PutItem, UpdateItem, DeleteItem | GetObject, DeleteObject, **ListBucket** (prefix `projects/*`) | — | — |
 | `api-documents` | GetItem, Query, PutItem, UpdateItem | GetObject, PutObject | — | — |
 | `api-review` | GetItem, Query, PutItem, UpdateItem | GetObject | — | **reconcile** |
 | `api-process` | GetItem, Query, PutItem, UpdateItem | GetObject | **StartExecution, DescribeExecution** | **reconcile** |
@@ -104,6 +104,7 @@ frontend (`local.cors_origins` gồm `var.frontend_origins` + Amplify URL). 11 r
 projects    POST   /projects
             GET    /projects
             GET    /projects/{project_id}
+            DELETE /projects/{project_id}
 
 documents   POST   /projects/{project_id}/documents
             GET    /projects/{project_id}/documents
@@ -115,6 +116,7 @@ review      POST   /projects/{project_id}/reconcile
             POST   /reconciliations/{reconciliation_id}/review
 
 process     POST   /projects/{project_id}/process
+            POST   /projects/{project_id}/process/stop
 ```
 
 Bảng này nằm ở hai nơi — `local.api_routes` và 4 danh sách trong

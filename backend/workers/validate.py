@@ -4,6 +4,9 @@ from .steps import begin_step, fail_step, finish_step, get_document
 
 
 def lambda_handler(event: dict, context) -> dict:
+    if event.get("skipped"):
+        return event
+
     document_id = event["document_id"]
     project_id = event.get("project_id")
 
@@ -13,7 +16,7 @@ def lambda_handler(event: dict, context) -> dict:
     if project_id is None:
         project_id = document.get("project_id")
 
-    result = validate_document(data)
+    result = validate_document(data, document.get("format_issues"))
     validation = {
         "valid": result["valid"],
         "schema_errors": result["schema_errors"],

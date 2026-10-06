@@ -109,6 +109,7 @@ export interface Project {
   updated_at?: string;
   document_count?: number;
   processing_run_id?: string;
+  deleting_at?: string;
   latest_reconciliation_id?: string;
   anchor_document_ids?: string[];
   anchor_updated_at?: string;
@@ -130,6 +131,7 @@ export interface Run extends Progress {
   document_ids: string[];
   started_at?: string;
   finished_at?: string;
+  cancel_requested_at?: string;
   error?: string | null;
 }
 

@@ -51,16 +51,16 @@ khi đang xử lý.
 - **Sidebar trái**: chỉ danh sách chứng từ (icon + tên) và nút Xử lý dưới cùng.
   Cố ý **không** có thanh tiến độ ở đây.
 - **Khung phải**: mọi thứ còn lại. Đang xử lý thì hiện sơ đồ tiến trình; xong thì
-  chuyển sang 4 tab.
+  hiện file gốc bên trái + 3 tab bên phải. Vạch chia kéo được để đổi tỉ lệ, nút
+  « ẩn khung file gốc cho rộng chỗ đọc kết quả; lựa chọn được nhớ cho lần sau.
 
 | Tab | Nội dung |
 |---|---|
-| **Tài liệu** | file gốc nhúng iframe (PDF) hoặc thẻ img (ảnh) |
-| **Kết quả OCR** | text OCR đọc được + các trường AI trích ra, đặt cạnh nhau |
+| **Trích xuất** | các trường AI trích ra + text OCR thô (mở khi cần truy lỗi) |
 | **Cảnh báo** | mâu thuẫn xếp theo mức nghiêm trọng, nút duyệt/từ chối |
 | **Sửa** | sửa tay, tô vàng trường confidence thấp, lưu xong tự đối soát lại |
 
-Tab **Kết quả OCR** đặt "OCR đọc ra gì" cạnh "AI hiểu thành gì" để biết lỗi nằm
+Tab **Trích xuất** đặt "OCR đọc ra gì" cạnh "AI hiểu thành gì" để biết lỗi nằm
 ở khâu đọc hay khâu hiểu — hai khâu đó sửa bằng hai cách khác nhau.
 
 ## Upload dùng presigned POST, không phải PUT
@@ -112,7 +112,7 @@ src/
   format.ts     tiền VND, ngày, nhãn tiếng Việt, màu theo mức nghiêm trọng
   hooks/useProject.ts
   pages/        ProjectList, ProjectDetail
-  components/   DocumentSidebar  WorkflowView  DocumentViewer
+  components/   DocumentSidebar  WorkflowView  DocumentViewer  SplitPane
                 OcrPanel  EditPanel  DiscrepancyCard
                 ProgressBar
 ```

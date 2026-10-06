@@ -32,6 +32,8 @@ MAX_FILES_PER_REQUEST = 20
 def create_documents(params: dict, body: dict, user: str) -> dict:
     project_id = params["project_id"]
     project = must_get_project(project_id)
+    if project.get("deleting_at"):
+        raise Conflict("Project đang bị xoá dở — bấm xoá lại để hoàn tất")
 
     files = body.get("files") or []
     if not files:

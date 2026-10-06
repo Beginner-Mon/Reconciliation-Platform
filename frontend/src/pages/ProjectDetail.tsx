@@ -7,18 +7,19 @@ import { DocumentSidebar } from "../components/DocumentSidebar";
 import { DocumentViewer } from "../components/DocumentViewer";
 import { EditPanel } from "../components/EditPanel";
 import { ExtractionPanel } from "../components/ExtractionPanel";
+import { SplitPane } from "../components/SplitPane";
 import { WorkflowView } from "../components/WorkflowView";
 import { SEVERITY_ORDER } from "../format";
 import { useProject } from "../hooks/useProject";
 import type { Discrepancy } from "../types";
 
-type TabKey = "document" | "extract" | "flags" | "edit";
+type TabKey = "extract" | "flags" | "edit";
 
 export function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const { data, error, loading, refresh, startPolling } = useProject(projectId);
 
-  const [tab, setTab] = useState<TabKey>("document");
+  const [tab, setTab] = useState<TabKey>("extract");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -30,12 +31,19 @@ export function ProjectDetail() {
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
 
   const active = data?.run?.is_active ?? false;
+  const stopping = active && Boolean(data?.run?.cancel_requested_at);
   const wasActive = useRef(active);
 
   useEffect(() => {
-    if (wasActive.current && !active) setNotice(null);
+    if (wasActive.current && !active) {
+      setNotice(
+        data?.run?.status === "CANCELLED"
+          ? "Đã dừng. Chứng từ chưa chạy giữ nguyên trạng thái — tích chọn để chạy đúng cái cần."
+          : null,
+      );
+    }
     wasActive.current = active;
-  }, [active]);
+  }, [active, data?.run]);
 
   const reconciliation = data?.latest_reconciliation ?? null;
   /** Sửa tay không còn tự đối chiếu, nên kết quả có thể đã lỗi thời. */
@@ -58,7 +66,7 @@ export function ProjectDetail() {
   useEffect(() => {
     if (showWorkflow && !active && data?.run) {
       setShowWorkflow(false);
-      setTab("flags");
+      if (data.run.status !== "CANCELLED") setTab("flags");
     }
   }, [active, showWorkflow, data?.run]);
 
@@ -171,6 +179,18 @@ export function ProjectDetail() {
     );
   }
 
+  async function stop() {
+    if (!projectId) return;
+    await run(
+      async () => {
+        await api.stopProcess(projectId);
+        await refresh();
+      },
+      () =>
+        "Đang dừng — chờ bước đang chạy dở kết thúc. Lời gọi AI đang chạy không thu hồi được.",
+    );
+  }
+
   /** Chỉ so các chứng từ với nhau — không gọi AI, không tốn tiền. */
   async function reconcile() {
     if (!projectId) return;
@@ -220,7 +240,6 @@ export function ProjectDetail() {
   const coTheDoiChieu = data.documents.some((d) => d.status === "VALIDATED");
 
   const TABS: { key: TabKey; label: string; badge?: number }[] = [
-    { key: "document", label: "Tài liệu" },
     { key: "extract", label: "Trích xuất" },
     { key: "flags", label: "Cảnh báo", badge: reconciliation?.discrepancy_count },
     { key: "edit", label: "Sửa" },
@@ -236,6 +255,7 @@ export function ProjectDetail() {
           selectedId={selectedId}
           checkedIds={checkedIds}
           running={active}
+          stopping={stopping}
           busy={busy}
           canReconcile={coTheDoiChieu}
           reconcileStale={stale}
@@ -259,6 +279,7 @@ export function ProjectDetail() {
           }
           onUpload={upload}
           onProcess={process}
+          onStop={stop}
           onReconcile={reconcile}
           onDelete={removeDocument}
         />
@@ -274,34 +295,41 @@ export function ProjectDetail() {
 
           {showWorkflow || active ? (
             <div className="flex-1 overflow-y-auto">
-              <WorkflowView documents={data.documents} progress={data.progress} active={active} />
+              <WorkflowView
+                documents={data.documents}
+                progress={data.progress}
+                active={active}
+                stopping={stopping}
+              />
             </div>
           ) : (
-            <>
-              <nav className="flex shrink-0 gap-1 border-b border-slate-200 bg-white px-3">
-                {TABS.map((entry) => (
-                  <button
-                    key={entry.key}
-                    onClick={() => setTab(entry.key)}
-                    className={`-mb-px border-b-2 px-4 py-2.5 text-sm transition ${
-                      tab === entry.key
-                        ? "border-sky-500 font-medium text-sky-700"
-                        : "border-transparent text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    {entry.label}
-                    {entry.badge ? (
-                      <span className="ml-1.5 rounded-full bg-red-100 px-1.5 text-xs text-red-700">
-                        {entry.badge}
-                      </span>
-                    ) : null}
-                  </button>
-                ))}
-              </nav>
+            <SplitPane
+              left={(thuGon) => <DocumentViewer document={selected} onCollapse={thuGon} />}
+              right={
+                <>
+                  <nav className="flex shrink-0 gap-1 border-b border-slate-200 bg-white px-3">
+                    {TABS.map((entry) => (
+                      <button
+                        key={entry.key}
+                        onClick={() => setTab(entry.key)}
+                        className={`-mb-px border-b-2 px-4 py-2.5 text-sm transition ${
+                          tab === entry.key
+                            ? "border-sky-500 font-medium text-sky-700"
+                            : "border-transparent text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        {entry.label}
+                        {entry.badge ? (
+                          <span className="ml-1.5 rounded-full bg-red-100 px-1.5 text-xs text-red-700">
+                            {entry.badge}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </nav>
 
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                {tab === "document" && <DocumentViewer document={selected} />}
-                {tab === "extract" && <ExtractionPanel document={selected} />}
+                  <div className="@container min-h-0 flex-1 overflow-y-auto">
+                    {tab === "extract" && <ExtractionPanel document={selected} />}
                 {tab === "edit" && (
                   <EditPanel
                     document={selected}
@@ -361,10 +389,12 @@ export function ProjectDetail() {
                                 key={`${discrepancy.rule_id}-${discrepancy.field}-${index}`}
                                 discrepancy={discrepancy}
                                 documents={data.documents}
+                                selectedId={selectedId}
                                 onEdit={(document) => {
                                   setSelectedId(document.document_id);
                                   setTab("edit");
                                 }}
+                                onView={(document) => setSelectedId(document.document_id)}
                               />
                             ))}
                           </div>
@@ -429,7 +459,9 @@ export function ProjectDetail() {
                   </div>
                 )}
               </div>
-            </>
+                </>
+              }
+            />
           )}
         </main>
       </div>

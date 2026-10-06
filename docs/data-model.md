@@ -56,6 +56,11 @@ conditional update `attribute_not_exists(processing_run_id)`; ai thua nhận 409
 Bước cuối của Step Functions (kể cả nhánh lỗi) **bắt buộc** `REMOVE` nó, nếu
 không project kẹt vĩnh viễn.
 
+`deleting_at` / `deleting_by` xuất hiện khi `DELETE /projects/{id}` đã bắt đầu.
+Có nó thì `/process` và upload trả 409; `claim_processing_run` cũng từ chối bằng
+điều kiện `attribute_not_exists(deleting_at)`. Xoá hỏng giữa chừng thì record
+project còn lại kèm cờ này — gọi xoá lại để hoàn tất.
+
 ## 3. `documents`
 
 ```json
@@ -94,6 +99,10 @@ không project kẹt vĩnh viễn.
 **Status**: `PENDING → PROCESSING → OCR_DONE → EXTRACTED → VALIDATED | FAILED`
 **Step**: `ocr | extract | validate`, **step_status**: `running | done | failed`
 
+`status_before_run`: `/process` ghi lúc xếp hàng — bằng `status` cũ nếu chứng từ
+đã xử lý xong, ngược lại `null`. Run bị dừng thì chứng từ chưa kịp chạy được trả
+về trạng thái này.
+
 `step`/`step_status`/`attempt` là nguồn dữ liệu cho progress polling — worker
 ghi 2 lần mỗi bước (vào bước / xong bước) → 6 mốc mỗi document.
 
@@ -128,6 +137,11 @@ document này ngay cả khi `force=true`, trừ khi truyền thêm `force_edited
 
 `run_id` được dùng làm **execution name** của Step Functions → gọi trùng không
 tạo execution thừa (Standard workflow idempotent theo name trong 90 ngày).
+
+**Status**: `PROCESSING → SUCCEEDED | FAILED | CANCELLED`.
+`cancel_requested_at` / `cancel_requested_by` do `POST /process/stop` ghi; worker
+đọc cờ này để bỏ qua. Run có cờ kết thúc ở `CANCELLED` và không sinh
+reconciliation.
 
 ## 5. `reconciliations`
 
@@ -180,6 +194,9 @@ Mỗi sự kiện là một dòng JSON trên stdout:
 | `PROJECT_CREATED` | Tạo project |
 | `DOCUMENTS_UPLOADED` | Upload chứng từ |
 | `RECONCILE_RUN` | Bấm đối chiếu |
+| `PROCESS_STOP_REQUESTED` | Bấm Dừng một run đang chạy |
+| `PROJECT_DELETE_STARTED` | Bắt đầu xoá project — ghi TRƯỚC khi xoá: tên, chứng từ, id run/reconciliation |
+| `PROJECT_DELETED` | Xoá project xong — số lượng thật đã xoá |
 
 Chi tiết: `observability.md`.
 

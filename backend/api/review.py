@@ -43,7 +43,12 @@ def edit_document(params: dict, body: dict, user: str) -> dict:
         raise BadRequest(f"Không được sửa trường: {', '.join(sorted(blocked))}")
 
     extraction = {**document["extraction"], **fields}
-    result = validate_document(extraction)
+    edited_fields = sorted(set(document.get("edited_fields") or []) | set(fields))
+    con_lai = [
+        muc for muc in (document.get("format_issues") or [])
+        if isinstance(muc, dict) and muc.get("field") not in edited_fields
+    ]
+    result = validate_document(extraction, con_lai)
     validation = {
         "valid": result["valid"],
         "schema_errors": result["schema_errors"],
@@ -53,7 +58,6 @@ def edit_document(params: dict, body: dict, user: str) -> dict:
         "comparison_incomplete": result["comparison_incomplete"],
     }
 
-    edited_fields = sorted(set(document.get("edited_fields") or []) | set(fields))
     errors = result["schema_errors"] + result["rule_errors"]
 
     updates = {

@@ -76,6 +76,10 @@ Quy tắc:
 - Trường không có thì bỏ qua, không bịa; confidence <0.8 nếu không chắc.
 - Trích TOÀN BỘ nhãn–giá trị ngoài bảng, phần tổng kết và ghi chú. Trường chưa có trong schema đưa vào other_fields, giữ nhãn và giá trị nguyên văn, kể cả phí/điều chỉnh chưa biết.
 - Chỉ trích dữ liệu có trên chứng từ. Không tự tính bù, sửa số, hoặc bỏ dữ liệu vì công thức không khớp.
+- role của cột chỉ là một trong 5 vai trò hoặc null của JSON, không ghi chuỗi "null".
+- Mỗi dòng bảng là MỘT object, khoá là header nguyên văn, đủ mọi cột, ô trống ghi null, không trả mảng.
+- Giá trị trong other_fields luôn là chuỗi, nhãn có mà ô trống thì ghi "".
+- Số hoá đơn, mã số thuế luôn là chuỗi, ngày luôn là YYYY-MM-DD.
 
 <<DOC_TYPE_FIELDS>>
 

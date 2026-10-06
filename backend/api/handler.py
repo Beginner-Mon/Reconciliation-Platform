@@ -27,7 +27,7 @@ logger.setLevel(logging.INFO)
 #
 # Thứ tự BÊN TRONG mỗi danh sách không quan trọng: match_template() đối chiếu
 # literal chính xác và bắt buộc cùng số đoạn, nên không template nào che template
-# khác. Nhưng một route KHÔNG được nằm ở hai danh sách, và tập 14 route phải
+# khác. Nhưng một route KHÔNG được nằm ở hai danh sách, và tập 15 route phải
 # trùng khít `local.api_routes` trong infra/modules/aws/main.tf —
 # tests/test_routes.py chặn cả hai lỗi đó offline.
 
@@ -35,6 +35,7 @@ PROJECT_ROUTES = [
     ("POST", "/projects", projects.create_project),
     ("GET", "/projects", projects.list_projects),
     ("GET", "/projects/{project_id}", projects.get_project),
+    ("DELETE", "/projects/{project_id}", projects.delete_project),
 ]
 
 DOCUMENT_ROUTES = [
@@ -58,9 +59,12 @@ ANCHOR_ROUTES = [
     ("PUT", "/projects/{project_id}/anchor", anchor.set_anchor),
 ]
 
-# Route DUY NHẤT gọi Step Functions trong toàn hệ thống.
+# process_project là hàm DUY NHẤT gọi Step Functions trong toàn hệ thống.
+# stop_processing chỉ đặt cờ trên record run — nằm ở miền này vì cùng file và
+# cùng bộ quyền DynamoDB.
 PROCESS_ROUTES = [
     ("POST", "/projects/{project_id}/process", process.process_project),
+    ("POST", "/projects/{project_id}/process/stop", process.stop_processing),
 ]
 
 ROUTES = PROJECT_ROUTES + DOCUMENT_ROUTES + REVIEW_ROUTES + ANCHOR_ROUTES + PROCESS_ROUTES
@@ -117,7 +121,7 @@ review_handler = _make_handler(REVIEW_ROUTES, "review_handler")
 anchor_handler = _make_handler(ANCHOR_ROUTES, "anchor_handler")
 process_handler = _make_handler(PROCESS_ROUTES, "process_handler")
 
-# GỘP đủ 14 route — KHÔNG được xoá. Dev server dựng một cửa duy nhất ở localhost
+# GỘP đủ 15 route — KHÔNG được xoá. Dev server dựng một cửa duy nhất ở localhost
 # (devserver/http_server.py, devserver/__main__.py) và test API gọi trực tiếp vào
 # đây. Cloud có bốn cửa, dev có một; đó là chỗ duy nhất hai môi trường khác nhau,
 # và nó nằm ở tầng vận chuyển chứ không phải tầng nghiệp vụ.

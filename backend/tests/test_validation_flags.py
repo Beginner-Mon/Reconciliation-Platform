@@ -117,6 +117,31 @@ def test_worker_and_edit_preserve_flags(aws):
     assert not any(f["code"] == "total_formula" for f in saved["validation"]["flags"])
 
 
+def test_sua_dung_truong_bao_loi_thi_tat_co(aws):
+    from common.dynamodb import DOCUMENTS_TABLE, get_item, put_item
+    from api.review import edit_document
+    van_de = [
+        {"field": "doc_date", "value": "28/12/2024", "reason": "x"},
+        {"field": "total_amount", "value": "3.734.640", "reason": "y"},
+    ]
+    put_item(DOCUMENTS_TABLE, {"document_id": "d", "project_id": "p", "extraction": document(), "format_issues": van_de})
+    edit_document({"document_id": "d", "project_id": "p"}, {"fields": {"doc_date": "2024-12-28"}}, "tri")
+    saved = get_item(DOCUMENTS_TABLE, {"document_id": "d"})
+    assert saved["status"] == "VALIDATED"
+    co = saved["validation"]["flags"]
+    assert not any(f["code"] == "ai_format" and f["field"] == "doc_date" for f in co)
+    assert any(f["code"] == "ai_format" and f["field"] == "total_amount" for f in co)
+
+
+def test_sua_tay_sai_kieu_khong_duoc_cuu(aws):
+    from common.dynamodb import DOCUMENTS_TABLE, get_item, put_item
+    from api.review import edit_document
+    put_item(DOCUMENTS_TABLE, {"document_id": "d", "project_id": "p", "extraction": document()})
+    edit_document({"document_id": "d", "project_id": "p"}, {"fields": {"doc_date": "28/12/2024"}}, "tri")
+    saved = get_item(DOCUMENTS_TABLE, {"document_id": "d"})
+    assert saved["status"] == "FAILED"
+
+
 def test_truncated_group_does_not_report_missing_rows():
     data = document()
     data["tables"][0]["rows"] *= 501

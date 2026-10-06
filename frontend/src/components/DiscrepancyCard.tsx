@@ -1,4 +1,4 @@
-import { AlertCircle, AlertOctagon, AlertTriangle, Info } from "lucide-react";
+import { AlertCircle, AlertOctagon, AlertTriangle, Eye, Info } from "lucide-react";
 import { DOCUMENT_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_STYLE, formatValue } from "../format";
 import type { Severity } from "../types";
 import type { Discrepancy, DocumentView } from "../types";
@@ -6,7 +6,9 @@ import type { Discrepancy, DocumentView } from "../types";
 interface Props {
   discrepancy: Discrepancy;
   documents: DocumentView[];
+  selectedId: string | null;
   onEdit: (document: DocumentView) => void;
+  onView: (document: DocumentView) => void;
 }
 
 const SEVERITY_ICON: Record<Severity, typeof AlertOctagon> = {
@@ -16,7 +18,7 @@ const SEVERITY_ICON: Record<Severity, typeof AlertOctagon> = {
   low: Info,
 };
 
-export function DiscrepancyCard({ discrepancy, documents, onEdit }: Props) {
+export function DiscrepancyCard({ discrepancy, documents, selectedId, onEdit, onView }: Props) {
   const Icon = SEVERITY_ICON[discrepancy.severity];
   const style = SEVERITY_STYLE[discrepancy.severity];
   const byId = new Map(documents.map((d) => [d.document_id, d]));
@@ -40,12 +42,34 @@ export function DiscrepancyCard({ discrepancy, documents, onEdit }: Props) {
               <tbody>
                 {discrepancy.values.map((value) => {
                   const document = byId.get(value.document_id);
+                  // Tô dòng đang hiện ở khung trái để biết đang so tờ nào.
+                  const dangXem = value.document_id === selectedId;
                   return (
-                    <tr key={value.document_id} className="border-b border-slate-100 last:border-0">
+                    <tr
+                      key={value.document_id}
+                      className={`border-b border-slate-100 last:border-0 ${dangXem ? "bg-sky-50" : ""}`}
+                    >
                       <td className="px-3 py-1.5 text-slate-600">
-                        {value.document_type
-                          ? DOCUMENT_TYPE_LABEL[value.document_type]
-                          : value.document_id}
+                        {document ? (
+                          <button
+                            onClick={() => onView(document)}
+                            title={`Xem ${document.file_name} ở khung bên trái`}
+                            className={`flex items-center gap-1 text-left hover:text-sky-700 hover:underline ${
+                              dangXem ? "font-medium text-sky-800" : ""
+                            }`}
+                          >
+                            {dangXem && <Eye size={12} />}
+                            {value.document_type
+                              ? DOCUMENT_TYPE_LABEL[value.document_type]
+                              : value.document_id}
+                          </button>
+                        ) : (
+                          <>
+                            {value.document_type
+                              ? DOCUMENT_TYPE_LABEL[value.document_type]
+                              : value.document_id}
+                          </>
+                        )}
                       </td>
                       <td className="px-3 py-1.5 text-right font-medium tabular-nums text-slate-900">
                         {formatValue(value.value)}

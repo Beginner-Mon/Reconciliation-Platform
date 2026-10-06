@@ -168,6 +168,47 @@ def query_documents_by_po_number(po_number: str) -> list[dict]:
     return query_index(DOCUMENTS_TABLE, PO_NUMBER_INDEX, "po_number", po_number)
 
 
+def query_document_names_by_project(project_id: str) -> list[dict]:
+    items = []
+    kwargs = {
+        "IndexName": PROJECT_INDEX,
+        "KeyConditionExpression": "#k = :v",
+        "ProjectionExpression": "#id, #name",
+        "ExpressionAttributeNames": {
+            "#k": "project_id",
+            "#id": "document_id",
+            "#name": "file_name",
+        },
+        "ExpressionAttributeValues": {":v": project_id},
+    }
+    while True:
+        response = get_table(DOCUMENTS_TABLE).query(**kwargs)
+        items.extend(response.get("Items", []))
+        token = response.get("LastEvaluatedKey")
+        if not token:
+            break
+        kwargs["ExclusiveStartKey"] = token
+    return from_dynamo(items)
+
+
+def scan_keys_by_project(table: str, key_field: str, project_id: str) -> list[str]:
+    keys = []
+    kwargs = {
+        "FilterExpression": "#p = :p",
+        "ProjectionExpression": "#k",
+        "ExpressionAttributeNames": {"#p": "project_id", "#k": key_field},
+        "ExpressionAttributeValues": {":p": project_id},
+    }
+    while True:
+        response = get_table(table).scan(**kwargs)
+        keys.extend(item[key_field] for item in response.get("Items", []))
+        token = response.get("LastEvaluatedKey")
+        if not token:
+            break
+        kwargs["ExclusiveStartKey"] = token
+    return keys
+
+
 def update_document(document_id: str, **updates) -> bool:
     payload_fields = {"extraction", "validation", "confidence", "ungrounded_fields"}
     if not payload_fields.intersection(updates):
@@ -197,7 +238,10 @@ def claim_processing_run(project_id: str, run_id: str) -> bool:
         PROJECTS_TABLE,
         {"project_id": project_id},
         {"processing_run_id": run_id},
-        condition="attribute_exists(project_id) AND attribute_not_exists(processing_run_id)",
+        condition=(
+            "attribute_exists(project_id) AND attribute_not_exists(processing_run_id) "
+            "AND attribute_not_exists(deleting_at)"
+        ),
     )
 
 

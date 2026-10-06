@@ -1,5 +1,5 @@
 from common.audit import log_pipeline_step
-from common.dynamodb import DOCUMENTS_TABLE, get_item, update_document
+from common.dynamodb import DOCUMENTS_TABLE, RUNS_TABLE, get_item, update_document
 from common.ids import now_iso
 
 STATUS_AFTER_STEP = {
@@ -7,6 +7,15 @@ STATUS_AFTER_STEP = {
     "extract": "EXTRACTED",
     "validate": "VALIDATED",
 }
+
+SKIPPED_CANCELLED = "cancelled"
+
+
+def run_cancel_requested(run_id: str | None) -> bool:
+    if not run_id:
+        return False
+    run = get_item(RUNS_TABLE, {"run_id": run_id})
+    return bool(run and run.get("cancel_requested_at"))
 
 
 def get_document(document_id: str) -> dict:

@@ -129,13 +129,23 @@ def test_moi_function_trong_terraform_tro_toi_handler_co_that():
         assert callable(getattr(handler, f"{domain}_handler"))
 
 
-def test_chi_mot_route_duy_nhat_goi_step_functions():
-    """`states:StartExecution` là quyền tiêu tiền AI — chỉ được ở đúng một chỗ.
+def test_chi_process_project_goi_step_functions():
+    """`states:StartExecution` là quyền tiêu tiền AI — chỉ `process_project` gọi nó.
 
-    Thêm route vào PROCESS_ROUTES nghĩa là mở rộng phạm vi quyền đó. Nếu có lý do
-    thật thì sửa test này, nhưng phải là quyết định có ý thức.
+    Miền `process` có thêm route dừng run, nhưng route đó chỉ đặt cờ trong
+    DynamoDB. Thêm route vào PROCESS_ROUTES nghĩa là thêm code chạy dưới role có
+    quyền StartExecution. Nếu có lý do thật thì sửa test này, nhưng phải là
+    quyết định có ý thức.
     """
-    assert route_keys(handler.PROCESS_ROUTES) == {"POST /projects/{project_id}/process"}
+    import inspect
+
+    from api import process
+
+    assert route_keys(handler.PROCESS_ROUTES) == {
+        "POST /projects/{project_id}/process",
+        "POST /projects/{project_id}/process/stop",
+    }
+    assert "start_execution" not in inspect.getsource(process.stop_processing)
 
 
 @pytest.mark.parametrize("domain", list(ROUTES_BY_DOMAIN))
@@ -321,3 +331,18 @@ def _hcl_block_ts(text: str, name: str) -> str:
             if depth == 0:
                 return text[mo : index + 1]
     raise AssertionError(f"Không tìm thấy mảng `{name}` trong format.ts")
+
+
+def test_role_projects_du_quyen_de_xoa_project():
+    block = _hcl_block(MAIN_TF.read_text(encoding="utf-8"), "api_functions")
+    projects = _hcl_block(block, "projects")
+    dynamodb = re.search(r"dynamodb\s*=\s*\[([^\]]*)\]", projects).group(1)
+    s3 = re.search(r"\bs3\s*=\s*\[([^\]]*)\]", projects).group(1)
+
+    for action in ("Scan", "UpdateItem", "DeleteItem"):
+        assert f'"{action}"' in dynamodb, action
+    assert '"DeleteObject"' in s3
+    assert re.search(r"s3_list\s*=\s*true", projects)
+
+    for domain in ("documents", "review", "process", "anchor"):
+        assert re.search(r"s3_list\s*=\s*false", _hcl_block(block, domain)), domain

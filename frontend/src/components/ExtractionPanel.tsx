@@ -149,7 +149,7 @@ export function ExtractionPanel({ document }: { document: DocumentView | null })
       {Object.keys(extraction.other_fields ?? {}).length > 0 && (
         <section>
           <h3 className="font-semibold text-slate-700">Trường bổ sung theo chứng từ</h3>
-          <dl className="grid grid-cols-2 gap-2 text-sm">
+          <dl className="grid grid-cols-1 gap-2 @md:grid-cols-2 text-sm">
             {Object.entries(extraction.other_fields ?? {}).map(([key, value]) => (
               <div key={key}><dt className="text-slate-500">{key}</dt><dd className="whitespace-pre-wrap">{value}</dd></div>
             ))}

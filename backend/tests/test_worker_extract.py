@@ -69,3 +69,43 @@ def test_gemini_loi_thi_giu_nguyen_nhan_sua_tay(da_sua_tay, monkeypatch):
     doc = _doc(da_sua_tay["document_id"])
     assert doc["edited_fields"] == ["vendor_tax_code"]
     assert doc["edited_by"] == "tri"
+
+
+def test_ngay_sai_duoc_go_ban_tho_con_nguyen(aws, monkeypatch):
+    from common.s3 import read_json
+
+    project_id, document_id = new_project_id(), new_document_id()
+    key = ocr_key(project_id, document_id)
+    write_json(key, {"text": "hoa don ngay 28/12/2024", "pages": []})
+    put_item(DOCUMENTS_TABLE, {"document_id": document_id, "project_id": project_id})
+    trich_tho = {
+        "document_type": "invoice",
+        "role": "billing",
+        "doc_number": "INV-1",
+        "doc_date": "28/12/2024",
+        "other_fields": {},
+        "tables": [],
+    }
+    monkeypatch.setattr(
+        "workers.extract.extract_with_gemini",
+        lambda ocr_json: {"document_type": "invoice", "data": dict(trich_tho)},
+    )
+    from workers.extract import lambda_handler
+
+    lambda_handler({"document_id": document_id, "project_id": project_id, "ocr_s3_key": key}, None)
+
+    doc = _doc(document_id)
+    assert "doc_date" not in doc["extraction"]
+    assert [m["field"] for m in doc["format_issues"]] == ["doc_date"]
+    assert doc["format_issues"][0]["value"] == "28/12/2024"
+    assert read_json(doc["extraction_s3_key"])["data"] == trich_tho
+
+    from workers.validate import lambda_handler as kiem_tra
+
+    assert kiem_tra({"document_id": document_id, "project_id": project_id}, None)["status"] == "VALIDATED"
+    co = _doc(document_id)["validation"]["flags"]
+    assert any(
+        f["code"] == "ai_format" and f["field"] == "doc_date"
+        and f["values"] == {"gia_tri_goc": "28/12/2024"}
+        for f in co
+    )

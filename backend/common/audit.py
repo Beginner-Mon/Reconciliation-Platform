@@ -144,3 +144,15 @@ def log_reconcile_run(project_id, detail, *, actor=None, source="api"):
 
 def log_document_deleted(project_id, detail, *, actor=None, source="api"):
     _log(project_id, "DOCUMENT_DELETED", detail, actor=actor, source=source, project_id=project_id)
+
+
+def log_process_stop_requested(project_id, detail, *, actor=None, source="api"):
+    _log(project_id, "PROCESS_STOP_REQUESTED", detail, actor=actor, source=source, project_id=project_id)
+
+
+def log_project_delete_started(project_id, detail, *, actor=None, source="api"):
+    _log(project_id, "PROJECT_DELETE_STARTED", detail, actor=actor, source=source, project_id=project_id)
+
+
+def log_project_deleted(project_id, detail, *, actor=None, source="api"):
+    _log(project_id, "PROJECT_DELETED", detail, actor=actor, source=source, project_id=project_id)

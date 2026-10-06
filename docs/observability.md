@@ -114,6 +114,9 @@ Hiện "ai làm" đang nằm lồng trong `detail` dưới ba tên khác nhau (`
 | `PROJECT_CREATED` | Tạo project | ❌ thêm |
 | `DOCUMENTS_UPLOADED` | Upload chứng từ (ai đưa file vào hệ thống) | ❌ thêm |
 | `RECONCILE_RUN` | Bấm đối chiếu | ❌ thêm |
+| `PROCESS_STOP_REQUESTED` | Bấm Dừng một run đang chạy | ✅ |
+| `PROJECT_DELETE_STARTED` | Bắt đầu xoá project — ghi trước khi xoá | ✅ |
+| `PROJECT_DELETED` | Xoá project xong, kèm số lượng đã xoá | ✅ |
 
 ## 5. Metric AI (EMF)
 

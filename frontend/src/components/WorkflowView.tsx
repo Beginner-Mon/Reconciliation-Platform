@@ -49,17 +49,20 @@ interface Props {
   documents: DocumentView[];
   progress: Progress;
   active: boolean;
+  stopping: boolean;
 }
 
-export function WorkflowView({ documents, progress, active }: Props) {
+export function WorkflowView({ documents, progress, active, stopping }: Props) {
   const failed = documents.filter((d) => d.status === "FAILED").length;
 
   return (
     <div className="mx-auto max-w-3xl px-8 py-8">
       <h2 className="text-lg font-semibold text-slate-800">
-        {active
-          ? `Đang xử lý ${progress.total_documents} chứng từ`
-          : "Đã xử lý xong"}
+        {stopping
+          ? "Đang dừng — chờ bước đang chạy dở kết thúc"
+          : active
+            ? `Đang xử lý ${progress.total_documents} chứng từ`
+            : "Đã xử lý xong"}
       </h2>
       <div className="mt-3">
         <ProgressBar
@@ -118,9 +121,11 @@ export function WorkflowView({ documents, progress, active }: Props) {
       </div>
 
       <div className="mt-8 border-t border-slate-200 pt-4 text-sm text-slate-500">
-        {active
-          ? "Xong hết → hệ thống tự đối soát toàn project"
-          : "Đã đối soát xong, xem tab Cảnh báo"}
+        {stopping
+          ? "Không gọi AI thêm. Chứng từ chưa bắt đầu giữ nguyên trạng thái."
+          : active
+            ? "Xong hết → hệ thống tự đối soát toàn project"
+            : "Đã đối soát xong, xem tab Cảnh báo"}
       </div>
     </div>
   );

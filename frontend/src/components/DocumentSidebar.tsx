@@ -7,6 +7,7 @@ import {
   Play,
   Plus,
   RotateCw,
+  Square,
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -59,6 +60,7 @@ interface Props {
   selectedId: string | null;
   checkedIds: string[];
   running: boolean;
+  stopping: boolean;
   busy: boolean;
   canReconcile: boolean;
   reconcileStale: boolean;
@@ -67,6 +69,7 @@ interface Props {
   onToggleAll: () => void;
   onUpload: (files: FileList) => void;
   onProcess: (engine: string) => void;
+  onStop: () => void;
   onReconcile: () => void;
   onDelete: (document: DocumentView) => void;
 }
@@ -77,6 +80,7 @@ export function DocumentSidebar({
   selectedId,
   checkedIds,
   running,
+  stopping,
   busy,
   canReconcile,
   reconcileStale,
@@ -85,6 +89,7 @@ export function DocumentSidebar({
   onToggleAll,
   onUpload,
   onProcess,
+  onStop,
   onReconcile,
   onDelete,
 }: Props) {
@@ -227,7 +232,8 @@ export function DocumentSidebar({
           >
             {running ? (
               <>
-                <Loader2 size={16} className="animate-spin" /> Đang chạy…
+                <Loader2 size={16} className="animate-spin" />{" "}
+                {stopping ? "Đang dừng…" : "Đang chạy…"}
               </>
             ) : (
               <>
@@ -236,18 +242,34 @@ export function DocumentSidebar({
               </>
             )}
           </button>
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              setMenuOpen((value) => !value);
-            }}
-            disabled={khoa}
-            aria-label="Chọn engine OCR"
-            title={`Engine OCR: ${engine}`}
-            className="flex w-9 items-center justify-center rounded-r-lg border-l border-sky-500 bg-sky-600 text-white transition hover:bg-sky-700 disabled:opacity-50"
-          >
-            <ChevronDown size={15} />
-          </button>
+          {running ? (
+            <button
+              onClick={onStop}
+              disabled={busy || stopping}
+              aria-label="Dừng run đang chạy"
+              title={
+                stopping
+                  ? "Đang dừng — chờ bước đang chạy dở kết thúc"
+                  : "Dừng: không gọi AI thêm cho các chứng từ còn lại"
+              }
+              className="flex w-9 items-center justify-center rounded-r-lg border-l border-red-500 bg-red-600 text-white transition hover:bg-red-700 disabled:opacity-50"
+            >
+              <Square size={14} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen((value) => !value);
+              }}
+              disabled={khoa}
+              aria-label="Chọn engine OCR"
+              title={`Engine OCR: ${engine}`}
+              className="flex w-9 items-center justify-center rounded-r-lg border-l border-sky-500 bg-sky-600 text-white transition hover:bg-sky-700 disabled:opacity-50"
+            >
+              <ChevronDown size={15} />
+            </button>
+          )}
 
           {menuOpen && (
             <div
