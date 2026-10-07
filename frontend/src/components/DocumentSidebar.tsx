@@ -195,6 +195,14 @@ export function DocumentSidebar({
                     </span>
                     <span className="mt-1 flex min-w-0 items-center gap-1.5">
                       <StatusTag document={document} />
+                      {document.needs_confirmation && (
+                        <span
+                          title="Có cảnh báo cần sửa hoặc tắt trước khi duyệt"
+                          className="shrink-0 rounded border border-amber-300 bg-amber-50 px-1.5 py-px text-[10px] font-semibold tracking-wide text-amber-800"
+                        >
+                          CẦN XEM
+                        </span>
+                      )}
                       {document.ocr_engine && (
                         <span className="truncate text-xs text-slate-400">
                           {document.ocr_engine}

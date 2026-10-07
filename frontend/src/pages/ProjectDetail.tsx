@@ -5,15 +5,15 @@ import { api, ApiError, uploadFile } from "../api";
 import { DiscrepancyCard } from "../components/DiscrepancyCard";
 import { DocumentSidebar } from "../components/DocumentSidebar";
 import { DocumentViewer } from "../components/DocumentViewer";
-import { EditPanel } from "../components/EditPanel";
-import { ExtractionPanel } from "../components/ExtractionPanel";
+import { ReviewPanel, type PendingFocus } from "../components/ReviewPanel";
 import { SplitPane } from "../components/SplitPane";
 import { WorkflowView } from "../components/WorkflowView";
 import { SEVERITY_ORDER } from "../format";
 import { useProject } from "../hooks/useProject";
+import { useReview } from "../hooks/useReview";
 import type { Discrepancy } from "../types";
 
-type TabKey = "extract" | "flags" | "edit";
+type TabKey = "extract" | "flags";
 
 export function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -29,6 +29,7 @@ export function ProjectDetail() {
   const [showWorkflow, setShowWorkflow] = useState(false);
   /** Chứng từ đã TÍCH CHỌN — khác `selectedId` (chứng từ đang xem ở khung phải). */
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [pendingFocus, setPendingFocus] = useState<PendingFocus | null>(null);
 
   const active = data?.run?.is_active ?? false;
   const stopping = active && Boolean(data?.run?.cancel_requested_at);
@@ -48,12 +49,14 @@ export function ProjectDetail() {
   const reconciliation = data?.latest_reconciliation ?? null;
   /** Sửa tay không còn tự đối chiếu, nên kết quả có thể đã lỗi thời. */
   const stale = reconciliation?.is_stale ?? false;
+  const choXacNhan = reconciliation?.unconfirmed_document_ids ?? [];
   const reconciliationId = reconciliation?.reconciliation_id;
 
   const selected = useMemo(
     () => data?.documents.find((d) => d.document_id === selectedId) ?? null,
     [data, selectedId],
   );
+  const review = useReview(selected, refresh);
 
   // Chọn sẵn file đầu tiên cho đỡ phải bấm.
   useEffect(() => {
@@ -260,9 +263,8 @@ export function ProjectDetail() {
   const coTheDoiChieu = data.documents.some((d) => d.status === "VALIDATED");
 
   const TABS: { key: TabKey; label: string; badge?: number }[] = [
-    { key: "extract", label: "Trích xuất" },
+    { key: "extract", label: "Trích xuất & sửa" },
     { key: "flags", label: "Cảnh báo", badge: reconciliation?.discrepancy_count },
-    { key: "edit", label: "Sửa" },
   ];
 
   return (
@@ -281,6 +283,7 @@ export function ProjectDetail() {
           reconcileStale={stale}
           onSelect={(document) => {
             setSelectedId(document.document_id);
+            setPendingFocus(null);
             if (showWorkflow && !active) setShowWorkflow(false);
           }}
           onToggle={(documentId) =>
@@ -324,7 +327,13 @@ export function ProjectDetail() {
             </div>
           ) : (
             <SplitPane
-              left={(thuGon) => <DocumentViewer document={selected} onCollapse={thuGon} />}
+              left={(thuGon) => (
+                <DocumentViewer
+                  document={selected}
+                  onCollapse={thuGon}
+                  review={tab === "extract" ? review : null}
+                />
+              )}
               right={
                 <>
                   <nav className="flex shrink-0 gap-1 border-b border-slate-200 bg-white px-3">
@@ -349,15 +358,14 @@ export function ProjectDetail() {
                   </nav>
 
                   <div className="@container min-h-0 flex-1 overflow-y-auto">
-                    {tab === "extract" && <ExtractionPanel document={selected} />}
-                {tab === "edit" && (
-                  <EditPanel
-                    document={selected}
-                    onSaved={async () => {
-                      await refresh();
-                    }}
-                  />
-                )}
+                    {tab === "extract" && (
+                      <ReviewPanel
+                        document={selected}
+                        review={review}
+                        pendingFocus={pendingFocus}
+                        onFocusDone={() => setPendingFocus(null)}
+                      />
+                    )}
                 {tab === "flags" && (
                   <div className="p-6">
                     {!reconciliation ? (
@@ -394,6 +402,32 @@ export function ProjectDetail() {
                           </p>
                         )}
 
+                        {choXacNhan.length > 0 && (
+                          <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                            <p className="flex items-center gap-2 font-medium">
+                              <AlertTriangle size={15} className="shrink-0" />
+                              {choXacNhan.length} chứng từ còn cảnh báo vị trí hoặc định dạng chưa sửa và chưa tắt — chưa duyệt được.
+                            </p>
+                            <ul className="mt-1 list-inside list-disc">
+                              {data.documents
+                                .filter((d) => choXacNhan.includes(d.document_id))
+                                .map((d) => (
+                                  <li key={d.document_id}>
+                                    <button
+                                      className="text-sky-700 hover:underline"
+                                      onClick={() => {
+                                        setSelectedId(d.document_id);
+                                        setTab("extract");
+                                      }}
+                                    >
+                                      {d.file_name}
+                                    </button>
+                                  </li>
+                                ))}
+                            </ul>
+                          </div>
+                        )}
+
                         {reconciliation.document_ids.length === 0 ? (
                           <p className="py-12 text-center text-slate-500">
                             Chưa có chứng từ nào so sánh được — chứng từ đang lỗi hoặc không nhận ra loại.
@@ -410,9 +444,10 @@ export function ProjectDetail() {
                                 discrepancy={discrepancy}
                                 documents={data.documents}
                                 selectedId={selectedId}
-                                onEdit={(document) => {
+                                onEdit={(document, field) => {
                                   setSelectedId(document.document_id);
-                                  setTab("edit");
+                                  setPendingFocus({ docId: document.document_id, field });
+                                  setTab("extract");
                                 }}
                                 onView={(document) => setSelectedId(document.document_id)}
                               />
@@ -465,8 +500,14 @@ export function ProjectDetail() {
                                     () => "Đã duyệt kết quả đối soát.",
                                   )
                                 }
-                                disabled={busy || active || stale}
-                                title={stale ? "Kết quả đã cũ — đối chiếu lại trước" : undefined}
+                                disabled={busy || active || stale || choXacNhan.length > 0}
+                                title={
+                                  stale
+                                    ? "Kết quả đã cũ — đối chiếu lại trước"
+                                    : choXacNhan.length > 0
+                                      ? "Còn chứng từ có cảnh báo chưa sửa và chưa tắt"
+                                      : undefined
+                                }
                                 className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                               >
                                 Duyệt kết quả đối soát

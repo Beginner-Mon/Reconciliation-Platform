@@ -64,12 +64,9 @@ def test_hoa_don_co_chiet_khau(discount):
     data = make_invoice(discount_amount=discount)
     result = validate_document(data)
     assert result["valid"]
-    if discount == -1:
-        assert any(f["code"] == "amount_sign" and f["field"] == "discount_amount" for f in result["flags"])
-    elif discount is None:
-        assert any(f["code"] == "insufficient_data" and f["field"] == "subtotal" for f in result["flags"])
-    else:
-        assert result["model"].discount_amount == discount
+    assert result["model"].discount_amount == discount
+    co = [f["code"] for f in result["flags"] if f["field"] == "discount_amount"]
+    assert co == (["amount_sign"] if discount == -1 else [])
 
 
 def test_validate_unknown_type():
@@ -126,18 +123,12 @@ def test_validate_negative_quantity():
     assert any(f["code"] == "quantity" for f in result["flags"])
 
 
-def test_validate_item_total_mismatch():
-    result = validate_document(make_po(total_amount=999999999))
+@pytest.mark.parametrize("tao", [make_po, make_invoice])
+def test_lech_so_hoc_khong_con_la_viec_cua_validate(tao):
+    result = validate_document(tao(total_amount=999999999))
     assert result["valid"]
     assert result["rule_errors"] == []
-    assert any(f["code"] == "insufficient_data" for f in result["flags"])
-
-
-def test_validate_invoice_subtotal_tax_mismatch():
-    result = validate_document(make_invoice(total_amount=999999999))
-    assert result["valid"]
-    assert result["rule_errors"] == []
-    assert any(f["code"] == "total_formula" for f in result["flags"])
+    assert result["flags"] == []
 
 
 def test_validate_future_date():

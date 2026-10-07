@@ -1,4 +1,5 @@
 import type {
+  DocumentView,
   Extraction,
   OcrResult,
   ProcessOptions,
@@ -6,6 +7,7 @@ import type {
   Project,
   ProjectDetail,
   Reconciliation,
+  Sources,
   UploadTarget,
 } from "./types";
 import { dangXuat, layToken } from "./auth";
@@ -94,11 +96,30 @@ export const api = {
   getOcr: (projectId: string, documentId: string) =>
     request<OcrResult>("GET", `/projects/${projectId}/documents/${documentId}/ocr`),
 
-  editDocument: (projectId: string, documentId: string, fields: Partial<Extraction>) =>
-    request<{ document: unknown; validation: unknown; reconciliation: Reconciliation }>(
+  editDocument: (
+    projectId: string,
+    documentId: string,
+    fields: Partial<Extraction>,
+    sources?: Sources,
+  ) =>
+    request<{ document: unknown; validation: unknown }>(
       "PATCH",
       `/projects/${projectId}/documents/${documentId}`,
-      { fields },
+      sources ? { fields, sources } : { fields },
+    ),
+
+  dismissFlag: (projectId: string, documentId: string, code: string, field: string) =>
+    request<{ document: DocumentView; validation: unknown }>(
+      "PATCH",
+      `/projects/${projectId}/documents/${documentId}`,
+      { dismiss: { code, field } },
+    ),
+
+  reopenFlag: (projectId: string, documentId: string, code: string, field: string) =>
+    request<{ document: DocumentView; validation: unknown }>(
+      "PATCH",
+      `/projects/${projectId}/documents/${documentId}`,
+      { undismiss: { code, field } },
     ),
 
   review: (reconciliationId: string, decision: "APPROVED" | "REJECTED") =>

@@ -276,3 +276,18 @@ def test_collect_blocks_gom_du_moi_trang_NextToken():
     assert [b["Text"] for b in blocks] == ["một", "hai", "ba"]
     assert da_goi == [None, "t2", "t3"]
     assert page_count == 3
+
+
+def test_words_lay_tu_Geometry_cua_WORD():
+    blocks = fake_blocks()
+    next(b for b in blocks if b.get("Id") == "w1")["Geometry"] = {
+        "BoundingBox": {"Left": 0.1, "Top": 0.2, "Width": 0.15, "Height": 0.03}
+    }
+
+    page = _parse_textract(blocks)["pages"][0]
+
+    assert page["words"] == [["Joma", 0.1, 0.2, 0.25, 0.23]]
+
+
+def test_WORD_khong_co_Geometry_thi_words_rong():
+    assert _parse_textract(fake_blocks())["pages"][0]["words"] == []

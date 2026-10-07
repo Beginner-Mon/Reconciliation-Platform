@@ -7,7 +7,7 @@ interface Props {
   discrepancy: Discrepancy;
   documents: DocumentView[];
   selectedId: string | null;
-  onEdit: (document: DocumentView) => void;
+  onEdit: (document: DocumentView, field: string) => void;
   onView: (document: DocumentView) => void;
 }
 
@@ -77,7 +77,7 @@ export function DiscrepancyCard({ discrepancy, documents, selectedId, onEdit, on
                       <td className="w-16 px-2 py-1.5 text-right">
                         {document?.extraction && (
                           <button
-                            onClick={() => onEdit(document)}
+                            onClick={() => onEdit(document, discrepancy.field)}
                             className="text-xs text-sky-700 hover:underline"
                           >
                             Sửa

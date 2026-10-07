@@ -38,6 +38,7 @@ DOCUMENT_FIELDS = [
     "ungrounded_fields",
     "edited_fields",
     "edited_at",
+    "dismissed_flags",
     "error",
 ]
 
@@ -67,8 +68,48 @@ def is_processed(document: dict) -> bool:
     return document.get("status") in PROCESSED_STATUSES
 
 
+BLOCKING_FLAG_CODES = ("ai_format", "vi_tri")
+
+
+def dismissed_key(code: str, field: str) -> str:
+    return f"{code}:{field}"
+
+
+def dismissed_map(document: dict) -> dict:
+    entries = document.get("dismissed_flags")
+    out = {}
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("code") and entry.get("field"):
+                out[dismissed_key(entry["code"], entry["field"])] = entry
+    return out
+
+
+def is_dismissed(document: dict, flag: dict) -> dict | None:
+    if not isinstance(flag, dict):
+        return None
+    entry = dismissed_map(document).get(dismissed_key(flag.get("code"), flag.get("field")))
+    if not entry:
+        return None
+    if entry.get("values", {}) != (flag.get("values") or {}):
+        return None
+    return entry
+
+
+def unconfirmed_flag_keys(document: dict) -> list[str]:
+    flags = (document.get("validation") or {}).get("flags") or []
+    return sorted({
+        dismissed_key(flag.get("code"), flag.get("field"))
+        for flag in flags
+        if isinstance(flag, dict)
+        and flag.get("code") in BLOCKING_FLAG_CODES
+        and not is_dismissed(document, flag)
+    })
+
+
 def document_view(document: dict, with_url: bool = False) -> dict:
     view = {key: document.get(key) for key in DOCUMENT_FIELDS if key in document}
+    view["needs_confirmation"] = bool(unconfirmed_flag_keys(document))
     if with_url:
         view["view_url"] = create_view_url(document.get("s3_key", ""))
     return view
@@ -126,4 +167,13 @@ def reconciliation_view(reconciliation: dict | None, documents: list[dict], proj
     """Bản ghi đối chiếu kèm cờ `is_stale` cho giao diện."""
     if not reconciliation:
         return None
-    return {**reconciliation, "is_stale": da_cu(reconciliation, documents, project)}
+    trong_dot = set(reconciliation.get("document_ids") or [])
+    cho = [
+        d.get("document_id") for d in documents
+        if d.get("document_id") in trong_dot and unconfirmed_flag_keys(d)
+    ]
+    return {
+        **reconciliation,
+        "is_stale": da_cu(reconciliation, documents, project),
+        "unconfirmed_document_ids": cho,
+    }

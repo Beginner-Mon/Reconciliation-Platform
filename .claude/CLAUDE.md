@@ -43,10 +43,12 @@ backend/
              http.py (response helper), views.py (serialize + progress)
   workers/   ocr, extract, validate, reconcile, mark_failed + steps.py (begin/finish/fail)
   core/      validate.py (luật TRONG 1 doc) | rules.py + crosscheck.py (luật GIỮA nhiều doc)
+             position.py (cờ vi_tri) | locate.py (ô nào lấy từ khung chữ nào)
   common/    s3, dynamodb, stepfunctions, ai_clients, audit, errors, ids
   schemas/   purchase_order, invoice, acceptance_record, unknown, registry.py
   devserver/ chạy backend ở localhost (moto server, AI THẬT) — KHÔNG vào Lambda zip
 frontend/    React 19 + TS + Vite + Tailwind v4; 2 màn hình, gọi API dev server
+             src/review/draft.ts = logic thuần của tab "Trích xuất & sửa"; hooks/useReview.ts
   tests/     conftest.py (moto), test_validate, test_crosscheck, test_api, test_devserver
 docs/        architecture.md, data-model.md, schemas.md, iac-plan.md, observability.md
 evaluation/  spike đo chất lượng AI + FINDINGS.md
@@ -58,6 +60,7 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 
 - Validate nghiệp vụ tạo `validation.flags`, không làm `FAILED`. `valid` chỉ thể hiện cấu trúc xử lý được, không có nghĩa nghiệp vụ đã đúng hay được duyệt. Lỗi cấu trúc vẫn `FAILED` và giữ dữ liệu gốc.
 - Extraction giữ toàn bộ trường ngoài bảng trong `other_fields`; không suy diễn để làm phép tính khớp. Không thêm công thức riêng cho từng loại phí.
+- Validate KHÔNG kiểm số học bằng công thức (gỡ 2026-10-07): không `số lượng × đơn giá = thành tiền`, không `Σ dòng − chiết khấu = tiền trước thuế`, không `tiền trước thuế + thuế = tổng`. Vai trò `amount` có thể rơi vào cột trước hay sau chiết khấu, nên hoá đơn Golden Gate trích ĐÚNG vẫn ra 6 cờ oan. Đừng thêm lại, cũng đừng thêm biến thể "có trừ chiết khấu". Số AI chép nhầm trong bảng do cờ `vi_tri` bắt. Dòng thiếu hẳn số lượng vẫn có cờ `insufficient_data` (trỏ vào ô số lượng) vì `crosscheck.build_refs` dựa vào đó để đặt `comparison_incomplete`.
 - Giới hạn 3 bảng, 25 cột/bảng, 500 dòng/bảng, 500 ký tự/ô. Có rút gọn thì ghi cảnh báo và không kết luận tổng dòng/thiếu-thừa của nhóm đó.
 - Dữ liệu document lớn lưu S3 qua `document_payload_s3_key`; helper DynamoDB tự đọc lại đầy đủ. API review cần `s3:PutObject` để lưu bản sửa lớn. Payload cũ bất biến giúp tránh ghi đè dữ liệu trước khi cập nhật con trỏ.
 
@@ -329,6 +332,78 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 - **Shim đối chiếu của dev server và test đi qua `lambda_handler`**, không qua
   `run_reconciliation`, và test thêm một vòng `json.dumps`/`loads`. Sửa
   `devserver/pipeline.py:install` thì phải sửa `tests/conftest.py` cho khớp.
+
+- **Kết quả OCR có `pages[].words = [[chữ, x0, y0, x1, y1]]`** (toạ độ chuẩn hoá
+  0–1) từ cả hai parser. Prompt Gemini KHÔNG đọc `words` (đã có test chặn) — thêm
+  vào là prompt phình mà Gemini vẫn gõ lại số như cũ.
+- **Cờ `vi_tri` sinh ở `workers/extract.py` bằng `core/position.py`**, lúc
+  `ocr_json` còn trong bộ nhớ. Nó lấy cấu trúc bảng từ chính kết quả Gemini rồi
+  đối chiếu với vị trí chữ, KHÔNG dùng luật theo mẫu chứng từ (đã thử luật kiểu
+  "dòng bắt đầu bằng STT, ít nhất 8 ô": đúng một hoá đơn, hỏng 6 chứng từ còn
+  lại). Không chắc thì không kết luận; ô trống và ô 0 coi như nhau. Bộ kiểm hỏng
+  thì ghi `POSITION_CHECK_FAILED` và coi như không có cảnh báo, không làm chứng từ
+  `FAILED`. Chứng từ xử lý trước thay đổi này không có `words` nên không có cờ.
+- **Chỉ cờ `ai_format` và `vi_tri` khoá Duyệt** (`views.BLOCKING_FLAG_CODES`).
+  Các cờ khác (`format`, `quantity`, `insufficient_data`…) không khoá. Mở khoá
+  bằng cách sửa ô rồi Lưu, hoặc tắt lẻ TỪNG cờ (`dismissed_flags`). KHÔNG còn nút
+  "Xác nhận" chung cho cả chứng từ và `PATCH {"confirm": true}` (gỡ 2026-10-07:
+  bấm xong không có gì đổi trên màn hình). Tắt cờ KHÔNG đóng dấu `updated_at` —
+  đóng dấu là kết quả đối chiếu thành cũ và người dùng kẹt trong vòng tắt cờ →
+  đối chiếu lại. Xử lý lại bằng AI thì cờ đã tắt bị xoá. Từ chối không bị khoá.
+- **Cảnh báo lấy từ SERVER và chỉ tính lại khi bấm Lưu.** Sửa ô mới chỉ đổi bản
+  nháp trong trình duyệt, nên cờ vẫn còn nguyên — hộp cảnh báo ghi "Đã sửa chỗ
+  này — bấm Lưu…" cho cờ nào có ô đã đổi trong nháp (`choLuu` ở
+  `ValidationFlags`). Gỡ dòng nhắc đó là người dùng tưởng sửa rồi mà cờ không mất.
+- **`GET …/ocr` trả thêm `layout`** (`core/locate.py`): ô nào, trường nào, tiêu đề
+  cột nào lấy từ khung chữ nào, dưới dạng `[trang, thứ tự chữ]`. Tính lại ở mỗi lần
+  gọi từ kết quả trích xuất hiện tại; chỉ khi người dùng đã Lưu thì dùng bản
+  `sources` lưu trên document. `at` (khung đang nằm đúng dòng–cột của ô) luôn tính
+  lại, không lưu. Dò bằng cách khớp chữ và số với chính kết quả Gemini, KHÔNG dùng
+  luật theo mẫu chứng từ; không tìm thấy thì để trống ("chưa rõ vị trí"), không
+  đoán. `locate` dùng chung `_layout` với `check_positions` — sửa một bên phải chạy
+  test của cả hai.
+- **`sources` đánh chỉ số theo VỊ TRÍ** (`tables[t].rows[r][c]`), không theo tên
+  cột, nên đổi tiêu đề không làm lệch. Nhưng cờ `vi_tri` và `dismissed_flags` gắn
+  theo SỐ THỨ TỰ DÒNG, vì vậy giao diện chỉ cho thêm dòng ở cuối bảng và xoá dòng
+  cuối. Muốn chèn hay xoá giữa bảng thì phải đánh lại chỉ số ở cả ba chỗ trước.
+- **Cờ `vi_tri` mang `col` (chỉ số cột) và `still_valid` tra theo `col`.** Thiếu nó
+  thì đổi tên một cột là cờ của ô chưa sửa biến mất và nút Duyệt mở khoá.
+- **`PATCH` chỉ có `sources` (không có `fields`) KHÔNG đóng dấu `updated_at`** —
+  gắn lại khung không đổi dữ liệu, nên không được làm kết quả đối chiếu thành cũ.
+  `PATCH` có `fields` mà không kèm `sources` thì xoá `sources` (quay về dò tự động);
+  worker extract cũng xoá. `clean_sources` bỏ mọi thứ lệch hình dạng với kết quả
+  trích xuất, và trả rỗng khi quá `MAX_NODES` để record không vượt 400 KB.
+- **Chứng từ gốc vẽ bằng pdf.js (`PdfPages.tsx`), không còn iframe** — iframe của
+  trình duyệt không cho vẽ đè. `disableRange` + `disableStream` để chỉ có một GET
+  trơn tới S3, không phụ thuộc vào việc S3 (và S3 giả lập ở dev) xử lý header
+  `Range` và preflight ra sao. Khung vẽ bằng SVG `viewBox="0 0 1 1"`, khớp thẳng toạ
+  độ chuẩn hoá của OCR. Ghim `pdfjs-dist@4.10.38`: bản 5 trở lên đổi tham số của
+  `render`.
+- **Chữ OCR đưa vào ô được đổi sang số theo `number_style`**, suy từ chính chứng từ
+  (`29.000` ↔ 29000 là dấu nghìn; `30.000` ↔ 30 là thập phân). Chỉ ô người dùng
+  chạm vào mới đổi kiểu. Ô không chạm phải giữ NGUYÊN kiểu và giá trị khi lưu, nếu
+  không `still_valid` coi là đã sửa và bỏ cờ.
+- **Bấm khung khi CHƯA chọn ô thì chỉ xem, không gán.** Gán chỉ xảy ra khi đã bấm
+  chọn một ô ở bên phải. Gộp hai thao tác làm một thì người dùng bấm dạo qua các
+  khung là dữ liệu bị đổi mà không biết.
+- Frontend vẫn chưa có test. Logic thuần của tab "Trích xuất & sửa" nằm riêng ở
+  `frontend/src/review/draft.ts` (không import React) để sau này thêm test dễ.
+- **Mọi cờ đều tắt lẻ được, kể cả cờ khoá** (`dismissed_flags` top-level,
+  KHÔNG nằm trong `validation` vì worker validate ghi đè cả dict đó). Tắt/mở qua
+  `PATCH {dismiss/undismiss: {code, field}}`, không thêm route nên vẫn 15 route.
+  Tắt KHÔNG đóng dấu `updated_at`. Sửa dữ liệu thì entry nào không còn
+  `code:field` trong cờ mới sẽ bị tỉa; đổi giá trị mà cờ còn thì hiện lại (cờ
+  khoá thì khoá lại) vì `values` snapshot lệch. AI trích lại thì xoá sạch.
+- **Cờ dòng `tables.T.rows.R` bấm được tới ô Thành tiền** (`dichCuaTruong` chọn cột
+  theo vai trò `amount → unit_price → quantity`). Cờ đối chiếu `items.Tên.role`
+  dò qua `dichCuaDoiChieu` bằng tên hàng khớp cột `item_name`. Không dò được thì
+  chỉ route như cũ, không đoán ô.
+- **Sửa inline trong ô, cache nháp 90 phút** (`review/cache.ts`, key
+  `nhap:project:doc`, kèm `updated_at` gốc). Ô đang sửa render `input` tại chỗ,
+  nhãn đứng yên, bấm khung OCR vẫn điền vào ô đó. Hộp xanh sticky đã bỏ: nút
+  "Lấy tại vị trí này" nằm gọn dưới input đang sửa, nút Để trống đã bỏ (xóa chữ
+  + Enter là ra trống), gom khung chưa màu hiện dải mỏng trên thanh Lưu. Nháp chỉ chốt vào draft, nút Lưu cuối mới gọi
+  API. Draft khác gốc thì ghi cache, bằng nhau hoặc hết hạn thì xoá.
 
 ## 6. Thêm loại chứng từ mới
 

@@ -23,14 +23,39 @@ export interface LineItem {
   unit_price?: number | null;
 }
 
+export type ColumnRole = "item_name" | "quantity" | "unit" | "unit_price" | "amount";
+export type CellValue = string | number | null;
+
 export interface Column {
   header: string;
-  role?: "item_name" | "quantity" | "unit" | "unit_price" | "amount" | null;
+  role?: ColumnRole | null;
 }
 
 export interface Table {
   columns: Column[];
-  rows: Record<string, string | number | null>[];
+  rows: Record<string, CellValue>[];
+}
+
+export type WordRef = [number, number];
+export type OcrWord = [string, number, number, number, number];
+
+export interface TableLayout {
+  headers: WordRef[][];
+  rows: WordRef[][][];
+  at?: WordRef[][][];
+}
+
+export interface OcrLayout {
+  fields: Record<string, WordRef[]>;
+  other: Record<string, { k: WordRef[]; v: WordRef[] }>;
+  tables: (TableLayout | null)[];
+  number_style: "thousands" | "decimal" | null;
+}
+
+export interface Sources {
+  fields: Record<string, WordRef[]>;
+  other: Record<string, { k: WordRef[]; v: WordRef[] }>;
+  tables: ({ headers: WordRef[][]; rows: WordRef[][][] } | null)[];
 }
 
 export interface Extraction {
@@ -74,6 +99,14 @@ export interface Validation {
   comparison_incomplete?: boolean;
 }
 
+export interface DismissedFlag {
+  code: string;
+  field: string;
+  values?: Record<string, unknown>;
+  by?: string | null;
+  at?: string | null;
+}
+
 export interface DocumentView {
   document_id: string;
   project_id: string;
@@ -97,6 +130,8 @@ export interface DocumentView {
   validation?: Validation;
   edited_fields?: string[];
   edited_at?: string;
+  needs_confirmation?: boolean;
+  dismissed_flags?: DismissedFlag[];
   error?: string | null;
   view_url?: string;
 }
@@ -162,6 +197,7 @@ export interface Reconciliation {
   severity_summary: Partial<Record<Severity, number>>;
   status: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
   is_stale?: boolean;
+  unconfirmed_document_ids?: string[];
   review?: { decision?: string | null; reviewer?: string | null; reviewed_at?: string | null };
   discrepancies?: Discrepancy[];
   groups?: { key: string | null; document_ids: string[]; document_types: string[]; anchor_document_id?: string | null }[];
@@ -191,10 +227,12 @@ export interface OcrResult {
   document_id: string;
   file_name: string;
   text: string;
+  layout?: OcrLayout | null;
   pages: {
     page_number: number;
     mean_token_confidence?: number | null;
     token_count?: number;
+    words?: OcrWord[];
     /** Từng dòng OCR đọc được, kèm độ tin cậy của riêng dòng đó. */
     lines?: { text: string; confidence?: number | null }[];
     key_value_pairs?: { key: string; value: string; confidence?: number | null }[];

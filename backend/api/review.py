@@ -10,10 +10,12 @@ from common.dynamodb import (
 from common.errors import BadRequest, Conflict, NotFound
 from common.ids import now_iso
 from core import validate_document
+from core.locate import clean_sources
+from core.position import still_valid
 
 from .http import json_response
 from .reconcile import must_get_reconciliation
-from .views import da_cu, document_view
+from .views import da_cu, dismissed_key, document_view, unconfirmed_flag_keys
 
 EDIT_BLOCKED_FIELDS = {"document_type"}
 
@@ -27,12 +29,95 @@ def _must_get_document(project_id: str, document_id: str) -> dict:
     return document
 
 
+def _link_document(document: dict, sources: dict) -> dict:
+    document_id = document["document_id"]
+    update_document(
+        document_id, sources=clean_sources(sources, document["extraction"]) or None
+    )
+    saved = get_item(DOCUMENTS_TABLE, {"document_id": document_id})
+    return json_response(
+        {"document": document_view(saved, with_url=True), "validation": saved.get("validation")}
+    )
+
+
+def _dismiss_flag(document: dict, dismiss: dict, user: str) -> dict:
+    code = dismiss.get("code") if isinstance(dismiss, dict) else None
+    field = dismiss.get("field") if isinstance(dismiss, dict) else None
+    flags = (document.get("validation") or {}).get("flags") or []
+    current = next(
+        (f for f in flags if isinstance(f, dict) and f.get("code") == code and f.get("field") == field),
+        None,
+    )
+    if not isinstance(code, str) or not isinstance(field, str) or current is None:
+        raise BadRequest("Không tìm thấy cảnh báo cần tắt")
+    kept = [
+        e for e in (document.get("dismissed_flags") or [])
+        if not (isinstance(e, dict) and e.get("code") == code and e.get("field") == field)
+    ]
+    kept.append({
+        "code": code,
+        "field": field,
+        "values": current.get("values") or {},
+        "by": user,
+        "at": now_iso(),
+    })
+    update_document(document["document_id"], dismissed_flags=kept)
+    log_review(
+        document["document_id"],
+        "REVIEW_DISMISS",
+        {"code": code, "field": field},
+        actor=user,
+        source="api",
+        project_id=document.get("project_id"),
+    )
+    saved = get_item(DOCUMENTS_TABLE, {"document_id": document["document_id"]})
+    return json_response(
+        {"document": document_view(saved, with_url=True), "validation": saved.get("validation")}
+    )
+
+
+def _reopen_flag(document: dict, undismiss: dict, user: str) -> dict:
+    code = undismiss.get("code") if isinstance(undismiss, dict) else None
+    field = undismiss.get("field") if isinstance(undismiss, dict) else None
+    if not isinstance(code, str) or not isinstance(field, str):
+        raise BadRequest("Thiếu code hoặc field để mở lại")
+    before = document.get("dismissed_flags") or []
+    kept = [
+        e for e in before
+        if not (isinstance(e, dict) and e.get("code") == code and e.get("field") == field)
+    ]
+    if len(kept) == len(before):
+        raise BadRequest("Cảnh báo này không ở trạng thái đã tắt")
+    update_document(document["document_id"], dismissed_flags=kept)
+    log_review(
+        document["document_id"],
+        "REVIEW_REOPEN",
+        {"code": code, "field": field},
+        actor=user,
+        source="api",
+        project_id=document.get("project_id"),
+    )
+    saved = get_item(DOCUMENTS_TABLE, {"document_id": document["document_id"]})
+    return json_response(
+        {"document": document_view(saved, with_url=True), "validation": saved.get("validation")}
+    )
+
+
 def edit_document(params: dict, body: dict, user: str) -> dict:
     project_id = params["project_id"]
     document_id = params["document_id"]
     document = _must_get_document(project_id, document_id)
 
     fields = body.get("fields") or {}
+    sources = body.get("sources")
+    dismiss = body.get("dismiss")
+    undismiss = body.get("undismiss")
+    if not fields and isinstance(dismiss, dict):
+        return _dismiss_flag(document, dismiss, user)
+    if not fields and isinstance(undismiss, dict):
+        return _reopen_flag(document, undismiss, user)
+    if not fields and isinstance(sources, dict) and document.get("extraction"):
+        return _link_document(document, sources)
     if not fields:
         raise BadRequest("Thiếu fields")
     if not document.get("extraction"):
@@ -48,7 +133,8 @@ def edit_document(params: dict, body: dict, user: str) -> dict:
         muc for muc in (document.get("format_issues") or [])
         if isinstance(muc, dict) and muc.get("field") not in edited_fields
     ]
-    result = validate_document(extraction, con_lai)
+    vi_tri = still_valid(document.get("position_issues") or [], extraction)
+    result = validate_document(extraction, con_lai, vi_tri)
     validation = {
         "valid": result["valid"],
         "schema_errors": result["schema_errors"],
@@ -60,9 +146,22 @@ def edit_document(params: dict, body: dict, user: str) -> dict:
 
     errors = result["schema_errors"] + result["rule_errors"]
 
+    con_hien = {
+        dismissed_key(f.get("code"), f.get("field"))
+        for f in result["flags"]
+        if isinstance(f, dict)
+    }
+    con_tat = [
+        e for e in (document.get("dismissed_flags") or [])
+        if isinstance(e, dict) and dismissed_key(e.get("code"), e.get("field")) in con_hien
+    ]
+
     updates = {
         "extraction": extraction,
         "validation": validation,
+        "position_issues": vi_tri,
+        "sources": clean_sources(sources, extraction) or None,
+        "dismissed_flags": con_tat,
         "edited_fields": edited_fields,
         "edited_at": now_iso(),
         "edited_by": user,
@@ -139,11 +238,23 @@ def review_reconciliation(params: dict, body: dict, user: str) -> dict:
 
     from common.dynamodb import PROJECTS_TABLE, get_item as _get_item
     project = _get_item(PROJECTS_TABLE, {"project_id": record["project_id"]})
-    if da_cu(record, query_documents_by_project(record["project_id"]), project):
+    documents = query_documents_by_project(record["project_id"])
+    if da_cu(record, documents, project):
         raise Conflict(
             "Có chứng từ được sửa sau lần đối chiếu này. Bấm Đối chiếu lại rồi "
             "hãy duyệt."
         )
+    if decision == "APPROVED":
+        trong_dot = set(record.get("document_ids") or [])
+        cho = [
+            d.get("file_name") or d.get("document_id") for d in documents
+            if d.get("document_id") in trong_dot and unconfirmed_flag_keys(d)
+        ]
+        if cho:
+            raise Conflict(
+                "Còn chứng từ có cảnh báo vị trí hoặc định dạng chưa xử lý: " + ", ".join(cho)
+                + ". Mở từng chứng từ, sửa rồi Lưu hoặc tắt từng cảnh báo đó rồi hãy duyệt."
+            )
 
     review = {
         "decision": decision,

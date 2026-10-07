@@ -188,6 +188,24 @@ def _key_value_pairs(page_blocks: list[dict], by_id: dict) -> list[dict]:
     return pairs
 
 
+def _word_boxes(word_blocks: list[dict]) -> list[list]:
+    boxes = []
+    for block in word_blocks:
+        box = (block.get("Geometry") or {}).get("BoundingBox") or {}
+        chu = block.get("Text") or ""
+        if not chu or not {"Left", "Top", "Width", "Height"} <= box.keys():
+            continue
+        x0, y0 = float(box["Left"]), float(box["Top"])
+        boxes.append([
+            chu,
+            round(x0, 4),
+            round(y0, 4),
+            round(x0 + float(box["Width"]), 4),
+            round(y0 + float(box["Height"]), 4),
+        ])
+    return boxes
+
+
 def _parse_textract(blocks: list[dict]) -> dict:
     by_id = {block["Id"]: block for block in blocks if "Id" in block}
 
@@ -236,6 +254,7 @@ def _parse_textract(blocks: list[dict]) -> dict:
                     {"rows": _table_rows(table, by_id)} for table in of_type("TABLE")
                 ],
                 "key_value_pairs": _key_value_pairs(page_blocks, by_id),
+                "words": _word_boxes(words),
                 # Confidence THẬT từ OCR — khác với confidence do LLM tự khai.
                 "token_count": len(words),
                 "mean_token_confidence": (

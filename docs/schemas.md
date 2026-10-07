@@ -5,13 +5,13 @@
 Phần này thay thế các điều kiện từ chối nghiệp vụ trong mô tả schema cũ bên dưới.
 Schema chung ở `backend/schemas/document.py`. `valid=true` nghĩa là dữ liệu có cấu trúc xử lý được,
 không khẳng định chứng từ đúng hoặc đã được phê duyệt. `rule_errors` giữ mảng rỗng để tương thích API.
-MST/số chứng từ sai mẫu, ngày tương lai, tiền/số lượng bất thường và lệch phép tính đều là `flags`.
+MST/số chứng từ sai mẫu, ngày tương lai, tiền/số lượng bất thường đều là `flags`.
 Mỗi flag có `code`, `field`, `message`, `values`, `formula` (có thể null).
 Sai JSON/cấu trúc/kiểu không xử lý được vẫn là `schema_errors`, trạng thái `FAILED`.
 
-Phép tính dùng Decimal, chỉ kiểm khi đủ dữ liệu; không mặc định trường thiếu bằng 0 hoặc
-so tổng item với total khi thiếu subtotal. Công thức tổng thanh toán chỉ là giả định
-`subtotal + tax_amount = total_amount`, flag nhắc rõ có thể chưa tính phí/điều chỉnh.
+Validate KHÔNG kiểm số học bằng công thức (gỡ 2026-10-07): không còn `quantity × unit_price = amount`,
+`Σ amount − discount_amount = subtotal` hay `subtotal + tax_amount = total_amount`. Chiết khấu từng
+dòng và phí ngoài thuế làm các công thức đó báo oan trên chứng từ trích đúng.
 Không dò từ khóa shipping hoặc thêm rule cho từng loại phí.
 Trường `shipping_amount` từ dữ liệu cũ được chuyển sang `other_fields` khi validate để giữ dữ liệu.
 
@@ -127,9 +127,7 @@ dùng chung sẽ fail validate oan.
 | Schema Pydantic (kiểu, required, regex, `> 0`) | mọi loại |
 | `currency` hợp lệ | loại nào có `currency` |
 | Ngày không ở tương lai | dùng `DATE_FIELD_BY_TYPE` |
-| `Σ(quantity × unit_price) == total_amount` | purchase_order |
-| `Σ(quantity × unit_price) − (discount_amount hoặc 0) == subtotal` (hoặc `total_amount`) | invoice |
-| `subtotal + tax_amount == total_amount` | invoice |
+| Số lượng của từng dòng hàng là số dương; dòng thiếu số lượng thì báo | bảng có cột tên hàng và số lượng |
 
 ## 7. Cross-check — giữa nhiều document (`core/rules.py`)
 

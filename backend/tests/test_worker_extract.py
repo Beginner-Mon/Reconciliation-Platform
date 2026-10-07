@@ -109,3 +109,86 @@ def test_ngay_sai_duoc_go_ban_tho_con_nguyen(aws, monkeypatch):
         and f["values"] == {"gia_tri_goc": "28/12/2024"}
         for f in co
     )
+
+
+def _tai_lieu_co_vi_tri():
+    from tests.test_position import trang
+
+    project_id, document_id = new_project_id(), new_document_id()
+    key = ocr_key(project_id, document_id)
+    write_json(key, {"text": "", "pages": trang()})
+    put_item(
+        DOCUMENTS_TABLE,
+        {
+            "document_id": document_id,
+            "project_id": project_id,
+            "dismissed_flags": [{
+                "code": "vi_tri",
+                "field": "tables.0.rows.9.cu",
+                "values": {},
+                "by": "tri",
+                "at": "2026-10-01T00:00:00+00:00",
+            }],
+        },
+    )
+    return {"project_id": project_id, "document_id": document_id, "ocr_s3_key": key}
+
+
+def test_gemini_xep_nham_cot_thi_luu_canh_bao_vi_tri_va_xoa_canh_bao_da_tat(aws, monkeypatch):
+    from tests.test_position import sua
+
+    event = _tai_lieu_co_vi_tri()
+    sai = sua(0, {"Chiết khấu": None, "Trước thuế": 58000})
+    monkeypatch.setattr(
+        "workers.extract.extract_with_gemini",
+        lambda ocr_json: {"document_type": "invoice", "data": sai},
+    )
+    from workers.extract import lambda_handler
+
+    lambda_handler(event, None)
+
+    doc = _doc(event["document_id"])
+    assert {m["field"] for m in doc["position_issues"]} == {
+        "tables.0.rows.0.Chiết khấu",
+        "tables.0.rows.0.Trước thuế",
+    }
+    assert doc["dismissed_flags"] == []
+
+
+def test_kiem_vi_tri_hong_thi_van_luu_duoc_ket_qua_trich_xuat(aws, monkeypatch):
+    from tests.test_position import DUNG, bang
+
+    event = _tai_lieu_co_vi_tri()
+    monkeypatch.setattr(
+        "workers.extract.extract_with_gemini",
+        lambda ocr_json: {"document_type": "invoice", "data": bang(*DUNG)},
+    )
+
+    def hong(data, pages):
+        raise RuntimeError("lỗi trong bộ kiểm vị trí")
+
+    monkeypatch.setattr("workers.extract.check_positions", hong)
+    from workers.extract import lambda_handler
+
+    lambda_handler(event, None)
+
+    doc = _doc(event["document_id"])
+    assert doc["position_issues"] == []
+    assert doc["extraction"]["tables"][0]["rows"][0]["Tên"] == "Coca Cola"
+
+
+def test_ai_trich_lai_thi_xoa_lien_ket_khung_cu(aws, monkeypatch):
+    from common.dynamodb import update_document
+    from tests.test_position import DUNG, bang
+
+    event = _tai_lieu_co_vi_tri()
+    update_document(event["document_id"], sources={"fields": {}, "other": {}, "tables": [None]})
+    monkeypatch.setattr(
+        "workers.extract.extract_with_gemini",
+        lambda ocr_json: {"document_type": "invoice", "data": bang(*DUNG)},
+    )
+    from workers.extract import lambda_handler
+
+    lambda_handler(event, None)
+
+    assert _doc(event["document_id"]).get("sources") is None

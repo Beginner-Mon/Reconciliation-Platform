@@ -16,7 +16,9 @@ def lambda_handler(event: dict, context) -> dict:
     if project_id is None:
         project_id = document.get("project_id")
 
-    result = validate_document(data, document.get("format_issues"))
+    result = validate_document(
+        data, document.get("format_issues"), document.get("position_issues")
+    )
     validation = {
         "valid": result["valid"],
         "schema_errors": result["schema_errors"],

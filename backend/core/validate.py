@@ -116,7 +116,7 @@ def _dung_model(data):
     return schema.model_validate(truncated), warnings
 
 
-def validate_document(data, format_issues=None):
+def validate_document(data, format_issues=None, position_issues=None):
     result = {"valid": False, "document_type": None, "model": None,
               "schema_errors": [], "rule_errors": [], "warnings": [], "flags": [],
               "comparison_incomplete": False}
@@ -145,6 +145,10 @@ def validate_document(data, format_issues=None):
             co.append({"code": "ai_format", "field": truong,
                        "message": f"AI trả {truong} sai định dạng nên đã bỏ trống — xem chứng từ gốc và nhập lại",
                        "values": {"gia_tri_goc": muc.get("value")}, "formula": None})
+    for muc in position_issues or []:
+        if isinstance(muc, dict) and muc.get("field") and muc.get("message"):
+            co.append({"code": "vi_tri", "field": muc["field"], "message": muc["message"],
+                       "values": {"gia_tri_ai": muc.get("value")}, "formula": None})
     result["flags"] = co
     return result
 
@@ -185,48 +189,24 @@ def business_flags(model: BaseModel, incomplete: bool = False) -> list[dict]:
         if value is not None and (value < 0 or (field in ("subtotal", "total_amount") and value == 0)):
             flag("amount_sign", field, f"Cần kiểm tra giá trị {field}", {field: value})
 
-    amounts = []
-    complete = not incomplete
     for ti, table in enumerate(model.tables):
         headers = {c.role: c.header for c in table.columns if c.role}
         if not {"item_name", "quantity"} <= headers.keys():
-            flag("insufficient_data", f"tables.{ti}", "Thiếu cột tên hàng hoặc số lượng; chưa đủ dữ liệu kiểm tra dòng hàng")
-            complete = False
+            flag("insufficient_data", f"tables.{ti}", "Thiếu cột tên hàng hoặc số lượng; chưa đủ dữ liệu để đối chiếu dòng hàng")
             continue
         if len(headers) != sum(c.role is not None for c in table.columns):
-            flag("insufficient_data", f"tables.{ti}", "Nhiều cột cùng vai trò; chưa xác định được cột dùng để tính")
-            complete = False
+            flag("insufficient_data", f"tables.{ti}", "Nhiều cột cùng vai trò; chưa xác định được cột dùng để đối chiếu")
             continue
         for ri, row in enumerate(table.rows):
-            field = f"tables.{ti}.rows.{ri}"
-            values = {role: row.get(headers.get(role)) for role in ("quantity", "unit_price", "amount")}
-            qty, price, amount = (_number(values[r]) for r in ("quantity", "unit_price", "amount"))
-            if values["quantity"] is not None and (qty is None or qty <= 0):
-                flag("quantity", field + "." + headers["quantity"], "Cần kiểm tra quantity không phải số dương", values)
-            if all(v is not None for v in (qty, price, amount)):
-                if qty * price != amount:
-                    flag("row_amount", field, "Cần kiểm tra thành tiền theo giả định số lượng × đơn giá; có thể có điều chỉnh trên dòng", values, "quantity × unit_price = amount")
-            else:
-                flag("insufficient_data", field, "Chưa đủ dữ liệu số để kiểm tra quantity × unit_price = amount", values)
-            if amount is None:
-                complete = False
-            else:
-                amounts.append(amount)
+            field = f"tables.{ti}.rows.{ri}.{headers['quantity']}"
+            so_luong = row.get(headers["quantity"])
+            qty = _number(so_luong)
+            if so_luong is None:
+                flag("insufficient_data", field, "Dòng này chưa có số lượng nên chưa so được với chứng từ khác", {"quantity": None})
+            elif qty is None or qty <= 0:
+                flag("quantity", field, "Cần kiểm tra quantity không phải số dương", {"quantity": so_luong})
     if incomplete:
         flag("incomplete_document", "tables", "Dữ liệu vượt giới hạn và đã rút gọn; không kết luận tổng hoặc thiếu/thừa trên bản này")
-    if complete and amounts and model.subtotal is not None and model.discount_amount is not None:
-        total_rows = sum(amounts, Decimal(0))
-        if total_rows - model.discount_amount != model.subtotal:
-            flag("subtotal_formula", "subtotal", "Cần kiểm tra subtotal theo giả định tiền hàng sau chiết khấu; công thức có thể chưa phản ánh chứng từ",
-                 {"sum_amount": str(total_rows), "discount_amount": model.discount_amount, "subtotal": model.subtotal}, "Σ amount − discount_amount = subtotal")
-    else:
-        flag("insufficient_data", "subtotal", "Chưa đủ dữ liệu kiểm tra tổng dòng hàng và chiết khấu; không mặc định trường thiếu bằng 0")
-    if all(v is not None for v in (model.subtotal, model.tax_amount, model.total_amount)):
-        if Decimal(model.subtotal) + Decimal(model.tax_amount) != Decimal(model.total_amount):
-            flag("total_formula", "total_amount", "Cần kiểm tra tổng thanh toán: công thức subtotal + tax chưa bao gồm phí hoặc điều chỉnh khác",
-                 {"subtotal": model.subtotal, "tax_amount": model.tax_amount, "total_amount": model.total_amount}, "subtotal + tax_amount = total_amount")
-    else:
-        flag("insufficient_data", "total_amount", "Chưa đủ subtotal, tax_amount và total_amount để kiểm tra tổng thanh toán")
     return flags
 
 

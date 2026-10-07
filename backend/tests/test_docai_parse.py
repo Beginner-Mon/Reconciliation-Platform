@@ -189,3 +189,41 @@ def test_prompt_roi_ve_text_khi_khong_co_blocks():
     from common.ai_clients import _build_ocr_text
 
     assert _build_ocr_text({"text": "nội dung thô", "pages": []}) == "nội dung thô"
+
+
+def khung(x0, y0, x1, y1):
+    return SimpleNamespace(normalized_vertices=[
+        SimpleNamespace(x=x0, y=y0), SimpleNamespace(x=x1, y=y0),
+        SimpleNamespace(x=x1, y=y1), SimpleNamespace(x=x0, y=y1),
+    ])
+
+
+def test_parse_giu_vi_tri_tung_chu():
+    doc = _fake_document()
+    co_khung = layout("Joma", confidence=0.9)
+    co_khung.bounding_poly = khung(0.1, 0.2, 0.25, 0.23)
+    doc.pages[0].tokens = [
+        SimpleNamespace(layout=co_khung),
+        SimpleNamespace(layout=layout("Bakery")),
+    ]
+
+    page = _parse_documentai(doc)["pages"][0]
+
+    assert page["words"] == [["Joma", 0.1, 0.2, 0.25, 0.23]]
+    assert page["token_count"] == 2
+
+
+def test_parse_token_khong_co_khung_thi_words_rong():
+    assert _parse_documentai(_fake_document())["pages"][0]["words"] == []
+
+
+def test_words_khong_lam_phinh_prompt_gui_gemini():
+    from common.ai_clients import _build_ocr_text
+
+    ocr = _parse_documentai(_fake_document())
+    co_words = {
+        **ocr,
+        "pages": [{**p, "words": [["Joma", 0.1, 0.2, 0.25, 0.23]]} for p in ocr["pages"]],
+    }
+
+    assert _build_ocr_text(co_words) == _build_ocr_text(ocr)

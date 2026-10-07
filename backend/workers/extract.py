@@ -10,6 +10,7 @@ from common.s3 import extraction_key, read_json, write_json
 
 from core import check_grounding
 from core.normalize import clean_extraction
+from core.position import check_positions
 
 from .steps import SKIPPED_CANCELLED, begin_step, finish_step, run_cancel_requested
 
@@ -76,6 +77,15 @@ def lambda_handler(event: dict, context) -> dict:
 
     data, format_issues = clean_extraction(data)
 
+    try:
+        position_issues = check_positions(data, ocr_json.get("pages"))
+    except Exception as exc:
+        print(
+            f"POSITION_CHECK_FAILED {document_id}: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        position_issues = []
+
     # Neo output của LLM về nguồn: giá trị nào không tìm thấy trong text OCR thì
     # nhiều khả năng bị bịa. CẢNH BÁO chứ không chặn — giá trị suy ra (subtotal
     # tính từ line items) có thể không xuất hiện nguyên văn mà vẫn đúng.
@@ -91,6 +101,9 @@ def lambda_handler(event: dict, context) -> dict:
         "extraction": data,
         "confidence": confidence,
         "format_issues": format_issues,
+        "position_issues": position_issues,
+        "dismissed_flags": [],
+        "sources": None,
         "document_type": document_type,
         "role": data.get("role") or "other",
         "ungrounded_fields": ungrounded,

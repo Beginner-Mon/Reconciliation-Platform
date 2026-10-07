@@ -19,17 +19,17 @@ def document():
     }
 
 
-def test_arithmetic_flags_do_not_block_reconciliation():
+def test_lech_so_hoc_khong_sinh_co_va_khong_chan_doi_chieu():
     data = document()
+    assert data["subtotal"] + data["tax_amount"] != data["total_amount"]
     result = validate_document(data)
     assert result["valid"]
     assert result["rule_errors"] == []
-    assert any(f["code"] == "total_formula" for f in result["flags"])
-    assert all("?" not in f["message"] for f in result["flags"])
+    assert result["flags"] == []
     assert result["model"].other_fields == data["other_fields"]
     checked = run_crosscheck([{"document_id": "d", "data": data}])
     assert checked["checked_document_ids"] == ["d"]
-    assert checked["validation_flags"]["d"]
+    assert checked["validation_flags"]["d"] == []
 
 
 @pytest.mark.parametrize("field,value", [
@@ -45,14 +45,33 @@ def test_business_constraints_are_flags(field, value):
     assert any(f["field"] == field for f in result["flags"])
 
 
-def test_decimal_row_and_missing_subtotal():
+@pytest.mark.parametrize("dong", [
+    {"Tên": "Hàng", "SL": 1, "Giá": 35000, "Tiền": 0},
+    {"Tên": "Hàng", "SL": 3, "Giá": 25000, "Tiền": 50000},
+    {"Tên": "Hàng", "SL": 3, "Giá": 0.1},
+])
+def test_dong_co_chiet_khau_hoac_thieu_tien_khong_bi_bao(dong):
     data = document()
-    data.pop("subtotal")
-    data["tables"][0]["rows"] = [{"Tên": "Hàng", "SL": 3, "Giá": 0.1, "Tiền": 0.3}]
+    data["tables"][0]["rows"] = [dong]
     result = validate_document(data)
     assert result["valid"]
-    assert not any(f["code"] in ("row_amount", "total_formula") for f in result["flags"])
-    assert any(f["code"] == "insufficient_data" for f in result["flags"])
+    assert result["flags"] == []
+
+
+def test_dong_thieu_so_luong_van_bao_de_doi_chieu_biet():
+    data = document()
+    data["tables"][0]["rows"] = [{"Tên": "Hàng", "Giá": 570, "Tiền": 570}]
+    result = validate_document(data)
+
+    assert result["flags"] == [{
+        "code": "insufficient_data",
+        "field": "tables.0.rows.0.SL",
+        "message": "Dòng này chưa có số lượng nên chưa so được với chứng từ khác",
+        "values": {"quantity": None},
+        "formula": None,
+    }]
+    checked = run_crosscheck([{"document_id": "a", "data": data}, {"document_id": "b", "data": document()}])
+    assert {d["rule_id"] for d in checked["discrepancies"]} == {"comparison_incomplete"}
 
 
 def test_limits_and_incomplete_data_do_not_create_false_totals():
@@ -66,7 +85,7 @@ def test_limits_and_incomplete_data_do_not_create_false_totals():
     result = validate_document(data)
     assert result["valid"] and result["warnings"]
     assert result["comparison_incomplete"]
-    assert not any(f["code"] == "subtotal_formula" for f in result["flags"])
+    assert [f["code"] for f in result["flags"]] == ["incomplete_document"]
 
 
 @pytest.mark.parametrize("bad", [None, [], {"tables": [None]}, {"tables": [{"columns": [], "rows": [42]}]}])
@@ -108,13 +127,15 @@ def test_worker_and_edit_preserve_flags(aws):
     from common.dynamodb import DOCUMENTS_TABLE, get_item, put_item
     from workers.validate import lambda_handler
     from api.review import edit_document
-    put_item(DOCUMENTS_TABLE, {"document_id": "d", "project_id": "p", "extraction": document()})
+    data = {**document(), "seller_tax_code": "abc"}
+    put_item(DOCUMENTS_TABLE, {"document_id": "d", "project_id": "p", "extraction": data})
     assert lambda_handler({"document_id": "d", "project_id": "p"}, None)["status"] == "VALIDATED"
-    assert get_item(DOCUMENTS_TABLE, {"document_id": "d"})["validation"]["flags"]
-    edit_document({"document_id": "d", "project_id": "p"}, {"fields": {"total_amount": 627}}, "tri")
+    truoc = get_item(DOCUMENTS_TABLE, {"document_id": "d"})["validation"]["flags"]
+    assert [f["code"] for f in truoc] == ["format"]
+    edit_document({"document_id": "d", "project_id": "p"}, {"fields": {"seller_tax_code": "0301234567"}}, "tri")
     saved = get_item(DOCUMENTS_TABLE, {"document_id": "d"})
     assert saved["status"] == "VALIDATED"
-    assert not any(f["code"] == "total_formula" for f in saved["validation"]["flags"])
+    assert saved["validation"]["flags"] == []
 
 
 def test_sua_dung_truong_bao_loi_thi_tat_co(aws):
@@ -207,3 +228,52 @@ def test_schema_failure_is_stored_for_review(aws):
     saved = get_item(DOCUMENTS_TABLE, {"document_id": "d"})
     assert saved["validation"]["schema_errors"]
     assert saved["extraction"] == data
+
+
+VI_TRI_TIEN = {
+    "field": "tables.0.rows.0.Tiền", "table": 0, "row": 0, "column": "Tiền", "value": 570,
+    "message": "Không thấy giá trị 570 trên dòng này của chứng từ",
+}
+VI_TRI_GIA = {
+    "field": "tables.0.rows.0.Giá", "table": 0, "row": 0, "column": "Giá", "value": 570,
+    "message": "Không thấy giá trị 570 tại cột này trên chứng từ",
+}
+
+
+def test_canh_bao_vi_tri_thanh_co_vi_tri_va_khong_lam_failed():
+    result = validate_document(document(), None, [VI_TRI_TIEN])
+
+    assert result["valid"]
+    assert [f for f in result["flags"] if f["code"] == "vi_tri"] == [{
+        "code": "vi_tri",
+        "field": "tables.0.rows.0.Tiền",
+        "message": VI_TRI_TIEN["message"],
+        "values": {"gia_tri_ai": 570},
+        "formula": None,
+    }]
+
+
+def test_sua_o_bi_canh_bao_thi_chi_co_cua_o_do_mat(aws):
+    from common.dynamodb import DOCUMENTS_TABLE, get_item, put_item
+    from workers.validate import lambda_handler
+    from api.review import edit_document
+
+    put_item(DOCUMENTS_TABLE, {
+        "document_id": "d", "project_id": "p", "extraction": document(),
+        "position_issues": [VI_TRI_TIEN, VI_TRI_GIA],
+    })
+    lambda_handler({"document_id": "d", "project_id": "p"}, None)
+    truoc = get_item(DOCUMENTS_TABLE, {"document_id": "d"})["validation"]["flags"]
+    assert sorted(f["field"] for f in truoc if f["code"] == "vi_tri") == [
+        "tables.0.rows.0.Giá", "tables.0.rows.0.Tiền",
+    ]
+
+    bang_moi = document()["tables"]
+    bang_moi[0]["rows"][0]["Tiền"] = 600
+    edit_document({"document_id": "d", "project_id": "p"}, {"fields": {"tables": bang_moi}}, "tri")
+
+    saved = get_item(DOCUMENTS_TABLE, {"document_id": "d"})
+    assert [f["field"] for f in saved["validation"]["flags"] if f["code"] == "vi_tri"] == [
+        "tables.0.rows.0.Giá"
+    ]
+    assert [m["field"] for m in saved["position_issues"]] == ["tables.0.rows.0.Giá"]

@@ -202,6 +202,21 @@ def _layout_confidence(layout) -> float | None:
     return round(float(value), 4) if value else None
 
 
+def _word_boxes(tokens, full_text: str) -> list[list]:
+    boxes = []
+    for token in tokens:
+        layout = getattr(token, "layout", None)
+        poly = getattr(layout, "bounding_poly", None)
+        corners = list(getattr(poly, "normalized_vertices", None) or [])
+        chu = _layout_text(layout, full_text)
+        if not chu or len(corners) < 4:
+            continue
+        xs = [float(getattr(corner, "x", 0) or 0) for corner in corners]
+        ys = [float(getattr(corner, "y", 0) or 0) for corner in corners]
+        boxes.append([chu, round(min(xs), 4), round(min(ys), 4), round(max(xs), 4), round(max(ys), 4)])
+    return boxes
+
+
 def _parse_documentai(doc) -> dict:
     text = doc.text or ""
     pages = []
@@ -264,6 +279,7 @@ def _parse_documentai(doc) -> dict:
                     }
                     for field in (getattr(page, "form_fields", []) or [])
                 ],
+                "words": _word_boxes(tokens, text),
                 # Confidence THẬT từ OCR — khác với confidence do LLM tự khai.
                 "token_count": len(tokens),
                 "mean_token_confidence": (

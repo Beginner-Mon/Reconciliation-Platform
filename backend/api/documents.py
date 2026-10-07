@@ -13,6 +13,7 @@ from common.errors import BadRequest, Conflict, NotFound
 from common.ids import new_document_id, now_iso
 from common.reconcile_client import invoke_reconcile
 from common.s3 import MAX_UPLOAD_BYTES, create_upload_post, delete_object, read_json, upload_key
+from core.locate import clean_sources, locate
 
 from .http import json_response
 from .projects import must_get_project
@@ -110,6 +111,39 @@ def create_documents(params: dict, body: dict, user: str) -> dict:
     return json_response({"project_id": project_id, "documents": created}, 201)
 
 
+def _layout(document: dict, pages) -> dict | None:
+    extraction = document.get("extraction")
+    if not isinstance(extraction, dict):
+        return None
+    try:
+        layout = locate(extraction, pages)
+    except Exception as exc:
+        print(
+            f"LOCATE_FAILED {document.get('document_id')}: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        tables = extraction.get("tables")
+        layout = {
+            "fields": {},
+            "other": {},
+            "tables": [None] * (len(tables) if isinstance(tables, list) else 0),
+            "number_style": None,
+        }
+    stored = clean_sources(document.get("sources"), extraction)
+    if stored:
+        layout["fields"] = stored["fields"]
+        layout["other"] = stored["other"]
+        for index, table in enumerate(stored["tables"]):
+            if table is None or index >= len(layout["tables"]):
+                continue
+            computed = layout["tables"][index] or {}
+            layout["tables"][index] = {
+                **table,
+                "at": computed.get("at") or [[[] for _ in row] for row in table["rows"]],
+            }
+    return layout
+
+
 def get_document_ocr(params: dict, body: dict, user: str) -> dict:
     """Text OCR thô của 1 document.
 
@@ -132,12 +166,14 @@ def get_document_ocr(params: dict, body: dict, user: str) -> dict:
         )
 
     ocr = read_json(ocr_key)
+    pages = ocr.get("pages", [])
     return json_response(
         {
             "document_id": document_id,
             "file_name": document.get("file_name"),
             "text": ocr.get("text", ""),
-            "pages": ocr.get("pages", []),
+            "pages": pages,
+            "layout": _layout(document, pages),
         }
     )
 
