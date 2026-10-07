@@ -160,3 +160,7 @@ def log_project_deleted(project_id, detail, *, actor=None, source="api"):
 
 def log_process_run_unstuck(project_id, detail, *, actor=None, source="api"):
     _log(project_id, "PROCESS_RUN_UNSTUCK", detail, actor=actor, source=source, project_id=project_id)
+
+
+def log_request_rejected(entity_id, detail, *, actor=None, source="api", project_id=None):
+    _log(entity_id, "REQUEST_REJECTED", detail, actor=actor, source=source, project_id=project_id)

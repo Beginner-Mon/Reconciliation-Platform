@@ -1,6 +1,7 @@
 import json
 import logging
 
+from common.audit import log_request_rejected
 from common.errors import AppError
 
 from . import anchor, documents, process, projects, reconcile, review
@@ -95,10 +96,25 @@ def _dispatch(routes: list, event: dict) -> dict:
 
     params = {**(event.get("pathParameters") or {}), **params}
 
+    user = None
     try:
         user = request_user(event)
         return handler(params, body, user)
     except AppError as exc:
+        # Chỉ ghi THAO TÁC bị từ chối. Giao diện poll GET liên tục, ghi cả đọc
+        # hỏng là bảng audit thành rác.
+        if method != "GET":
+            log_request_rejected(
+                params.get("project_id") or params.get("reconciliation_id"),
+                {
+                    "method": method,
+                    "path": path,
+                    "status_code": exc.status_code,
+                    "error": exc.message,
+                },
+                actor=user,
+                project_id=params.get("project_id"),
+            )
         return error_response(exc.message, exc.status_code)
     except Exception as exc:
         logger.exception("Lỗi khi xử lý %s %s", method, path)

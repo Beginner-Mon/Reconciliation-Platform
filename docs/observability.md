@@ -111,13 +111,14 @@ Hiện "ai làm" đang nằm lồng trong `detail` dưới ba tên khác nhau (`
 | `EDIT_OVERWRITTEN` | `force_edited=true` cho AI ghi đè dữ liệu người đã sửa — thao tác phá huỷ duy nhất | ✅ |
 | `REVIEW_EDIT` | Người sửa tay một chứng từ | ✅ |
 | `REVIEW_DECISION` | Duyệt/từ chối một đợt đối chiếu | ✅ |
-| `PROJECT_CREATED` | Tạo project | ❌ thêm |
-| `DOCUMENTS_UPLOADED` | Upload chứng từ (ai đưa file vào hệ thống) | ❌ thêm |
-| `RECONCILE_RUN` | Bấm đối chiếu | ❌ thêm |
+| `PROJECT_CREATED` | Tạo project | ✅ |
+| `DOCUMENTS_UPLOADED` | Upload chứng từ (ai đưa file vào hệ thống) | ✅ |
+| `RECONCILE_RUN` | Bấm đối chiếu | ✅ |
 | `PROCESS_STOP_REQUESTED` | Bấm Dừng một run đang chạy | ✅ |
 | `PROJECT_DELETE_STARTED` | Bắt đầu xoá project — ghi trước khi xoá | ✅ |
 | `PROJECT_DELETED` | Xoá project xong, kèm số lượng đã xoá | ✅ |
 | `PROCESS_RUN_UNSTUCK` | Bấm Dừng trên run đã chết — run được kết thúc và nhả khoá ngay | ✅ |
+| `REQUEST_REJECTED` | Thao tác bị từ chối (400/404/409) ở bất kỳ route nào khác `GET` — ghi tại router (`api/handler.py`), kèm `method`, `path`, `status_code`, `error`. Thiếu nó thì "bấm Xử lý mà không thấy gì" không tra lại được | ✅ |
 
 ## 5. Metric AI (EMF)
 
@@ -153,7 +154,7 @@ Một dashboard tên `{app_name}-{env}` (dev: `recon-dev`), khai bằng Terrafor
 
 | Hàng | Widget | Nguồn |
 |---|---|---|
-| **Audit** | Bảng 100 sự kiện gần nhất: thời gian, `actor`, `action`, `project_id`, `entity_id` · đếm theo `action` | Logs Insights |
+| **Audit** | Bảng 100 sự kiện gần nhất: thời gian, `actor`, `action`, `detail.step`, `detail.status`, `project_id`, `entity_id` · đếm theo `action` | Logs Insights |
 | **AI** | Chi phí/ngày + **đường ngang $1** · số lần 429 · latency p90 | EMF `Recon/AI` |
 | **Pipeline** | Step Functions Succeeded/Failed · API Gateway 5xx · Latency | Metric có sẵn |
 | **Lỗi** | Lambda Errors theo function · bảng log lỗi gần nhất | Có sẵn + Logs Insights |
@@ -161,8 +162,10 @@ Một dashboard tên `{app_name}-{env}` (dev: `recon-dev`), khai bằng Terrafor
 Query mẫu:
 
 ```sql
--- Nhật ký audit
-fields @timestamp, actor, action, project_id, entity_id
+-- Nhật ký audit. detail.step chỉ có ở PIPELINE_STEP; detail.status có ở
+-- PIPELINE_STEP và AI_CALL. Thiếu hai cột này thì mọi dòng PIPELINE_STEP trông
+-- giống hệt nhau.
+fields @timestamp, actor, action, detail.step, detail.status, project_id, entity_id
 | filter audit = 1 | sort @timestamp desc | limit 100
 
 -- Ai làm gì nhiều nhất
