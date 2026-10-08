@@ -247,6 +247,22 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   nào hiện ra cho tới khi bật `PYTHONUNBUFFERED`. Lambda timeout giữa chừng thì
   phần còn trong bộ đệm mất luôn.
 - **Amplify deploy thủ công bằng zip**, không nối GitHub (token sẽ nằm trong tfstate local chưa mã hoá). Branch cố định `main`, URL `https://<branch>.<app_id>.amplifyapp.com` cho vào `local.cors_origins`.
+- **`deploy_frontend.ps1` từ chối chạy khi `VITE_API_URL` trống hoặc là
+  localhost**, và sau khi build thì kiểm chính bundle có chứa URL đó.
+  `frontend/.env` bình thường là cấu hình dev; build nguyên trạng thì bản trên
+  Amplify không đòi đăng nhập và gọi API về máy của chính người xem, trong khi
+  deploy vẫn báo SUCCEED. Cấu hình prod truyền qua biến môi trường của lệnh
+  (Vite ưu tiên biến môi trường hơn file `.env`; script đọc theo đúng thứ tự
+  đó). Đừng sửa `.env` để deploy: dev server đang chạy sẽ tự khởi động lại sang
+  API prod.
+- **Luật rewrite của Amplify (`aws_amplify_app.custom_rule`) trả `index.html`
+  cho mọi đuôi file KHÔNG nằm trong danh sách của nó.** Worker `.mjs` của pdf.js
+  từng bị trả HTML 410 byte thay cho 1,4 MB JavaScript, deploy vẫn SUCCEED và
+  `npm run dev` không lộ. Thêm loại file tĩnh mới thì thêm đuôi vào danh sách.
+  Sửa luật xong PHẢI deploy lại frontend: CloudFront cache cả câu trả lời sai
+  với `s-maxage` 1 năm, thêm `?t=` không phá được, chỉ deployment mới xoá cache.
+  Kiểm bằng `curl -D -` xem `content-type`; muốn biết luật mới đã có hiệu lực
+  chưa thì thử một đường dẫn CHƯA TỪNG được gọi.
 
 - **Bucket state phải có trước `terraform init`**: backend không dùng được biến.
   Dùng stack `infra/bootstrap/` riêng, state bootstrap giữ local. `.gitignore`

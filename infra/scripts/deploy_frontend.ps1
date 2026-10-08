@@ -25,6 +25,31 @@ if (-not (Test-Path (Join-Path $frontend ".env"))) {
     }
 }
 
+# Vite lấy VITE_* theo thứ tự: biến môi trường của tiến trình, rồi các file dưới
+# đây. Phải đọc đúng thứ tự đó - chỉ đọc `.env` thì báo oan khi cấu hình prod đi
+# qua biến môi trường hoặc `.env.production`.
+function Get-GiaTriVite([string]$ten) {
+    $tuTienTrinh = [Environment]::GetEnvironmentVariable($ten)
+    if ($tuTienTrinh) { return $tuTienTrinh.Trim() }
+    foreach ($file in @(".env.production.local", ".env.production", ".env.local", ".env")) {
+        $duongDan = Join-Path $frontend $file
+        if (-not (Test-Path $duongDan)) { continue }
+        $noiDung = Get-Content $duongDan -Raw
+        if (-not $noiDung) { continue }
+        $khop = [regex]::Match($noiDung, "(?m)^\s*$ten\s*=\s*(\S+)")
+        if ($khop.Success) { return $khop.Groups[1].Value.Trim('"').Trim("'") }
+    }
+    return ""
+}
+
+# `.env` bình thường để cấu hình localhost cho dev. Build nguyên trạng thì bản
+# trên Amplify không đòi đăng nhập và gọi API về máy của chính người xem, trong
+# khi deploy vẫn báo SUCCEED.
+$apiProd = Get-GiaTriVite "VITE_API_URL"
+if (-not $apiProd -or $apiProd -match "localhost|127\.0\.0\.1|\[::1\]") {
+    throw "VITE_API_URL đang là '$apiProd' (trống hoặc localhost) - không deploy bản này lên Amplify. Đặt VITE_API_URL, VITE_COGNITO_USER_POOL_ID, VITE_COGNITO_CLIENT_ID, VITE_AWS_REGION của prod vào biến môi trường rồi chạy lại."
+}
+
 Write-Host "== Build frontend ==" -ForegroundColor Cyan
 Push-Location $frontend
 try {
@@ -36,6 +61,12 @@ try {
 
 $dist = Join-Path $frontend "dist"
 if (-not (Test-Path $dist)) { throw "không tìm thấy $dist — build thất bại?" }
+
+# Kiểm chính bundle, không kiểm đầu vào: URL phải thật sự nằm trong file JS sẽ
+# được upload.
+$coApi = @(Get-ChildItem -Path (Join-Path $dist "assets") -Filter "*.js" -File |
+    Where-Object { [System.IO.File]::ReadAllText($_.FullName).Contains($apiProd) }).Count
+if ($coApi -eq 0) { throw "bundle trong $dist không chứa VITE_API_URL ($apiProd) - Vite đã lấy cấu hình từ chỗ khác" }
 
 $zip = Join-Path $env:TEMP "frontend-dist.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }
