@@ -16,15 +16,15 @@ DynamoDB + S3), AI chạy trên **Google Cloud** (Document AI + Gemini), IaC b�
 Đo trên 6 chứng từ thật: OCR chính xác **97,6%**, dấu tiếng Việt **99,5%**, chi
 phí **$0,021** — [evaluation/FINDINGS.md](evaluation/FINDINGS.md).
 
-Bước OCR **đổi engine được ngay trên giao diện, cho từng chứng từ**: Amazon
-Textract (mặc định, đang có free tier) hoặc Google Document AI. Cả hai khai
+Bước OCR **đổi engine được ngay trên giao diện, cho từng chứng từ**: Google
+Document AI Enterprise OCR (`dococr`, mặc định) hoặc Amazon Textract. Cả hai khai
 chung trong
 [backend/common/ocr_engines.py](backend/common/ocr_engines.py). Nhờ chọn được
 theo từng lần chạy, hai engine so được trên **cùng một** tờ chứng từ.
 
 Textract *không* hỗ trợ tiếng Việt — đo trên hoá đơn thật thì mất gần hết dấu
-nhưng số đọc đúng hết, nên cảnh báo hiện ngay tại chỗ chọn engine. Cần dấu thì
-đổi sang Document AI.
+nhưng số đọc đúng hết, nên cảnh báo hiện ngay tại chỗ chọn engine. Vì vậy mặc
+định là Document AI.
 
 > **Trạng thái: POC đã có auth.** API Gateway yêu cầu **Cognito JWT** (`Authorization: Bearer <id token>`); frontend có cổng đăng nhập (Amplify, bắt đổi mật khẩu lần đầu). Chỉ khi chạy ở máy với `VITE_API_URL` localhost và thiếu `VITE_COGNITO_*` mới bỏ qua đăng nhập (`env=dev` trên AWS vẫn yêu cầu JWT). Đừng đưa dữ liệu thật chưa ẩn danh vào hệ thống.
 
@@ -51,14 +51,17 @@ vụ, không phải tối ưu.
 
 ## 2. Kiến trúc
 
-![Kiến trúc hệ thống: User qua API Gateway tới 4 Lambda api; api-process khởi động Step Functions chạy Map gồm OCR → Extract → Validate rồi Reconcile; OCR gọi Document AI, Extract gọi Gemini](docs/images/architecture.png)
+![Kiến trúc hệ thống: User qua API Gateway tới 5 Lambda api; api-process khởi động Step Functions chạy Map gồm OCR → Extract → Validate rồi Reconcile; OCR gọi Document AI, Extract gọi Gemini](docs/images/architecture.png)
 
 <sub>Vẽ bằng draw.io; file PNG nhúng sẵn XML nguồn nên không cần giữ `.drawio` riêng.
 Muốn sửa: [app.diagrams.net](https://app.diagrams.net) → <b>File → Open From → Device</b> rồi chọn file PNG này.
 Copy-paste hay kéo thả vào canvas KHÔNG được — clipboard chỉ mang pixel, phần XML nằm trong file.</sub>
 
+> Hình chưa cập nhật: thiếu Lambda `api-anchor` (đổi chứng từ gốc), Cognito và
+> Amplify. Số đúng là **5** Lambda api — xem [docs/iac-plan.md](docs/iac-plan.md) §3.
+
 - **`states:StartExecution` chỉ ở `api-process`** — quyền *tiêu tiền AI*, cô lập
-  nó là lý do chính của việc chia bốn. Bảng IAM:
+  nó là lý do chính của việc chia năm. Bảng IAM:
   [docs/iac-plan.md](docs/iac-plan.md) §3.
 - **Bảng định tuyến nằm ở hai nơi** (Terraform + `handler.py`) nên
   [`tests/test_routes.py`](backend/tests/test_routes.py) đọc thẳng `main.tf` để
@@ -80,95 +83,38 @@ Lý do đầy đủ: [docs/architecture.md](docs/architecture.md) §4–§6.
 
 ```
 backend/
-  api/         handler.py (router 4 miền) + projects · documents · process · reconcile · review
+  api/         handler.py (router 5 miền) + projects · documents · process · reconcile · review · anchor
   workers/     ocr · extract · validate · reconcile · mark_failed + steps.py
-  core/        validate.py (luật TRONG 1 chứng từ) · rules.py + crosscheck.py
+  core/        validate.py (luật TRONG 1 chứng từ) · rules.py + compare.py + crosscheck.py
                (luật GIỮA nhiều chứng từ) — KHÔNG gọi AI
   common/      s3 · dynamodb · stepfunctions · ai_clients · audit · errors · ids
-  schemas/     purchase_order · invoice · acceptance_record · unknown + registry.py
+  schemas/     document.py (schema chung cho mọi loại) + registry.py
   devserver/   chạy backend ở localhost (moto giả lập AWS, AI THẬT)
   tests/       pytest, offline hoàn toàn
 frontend/      React 19 + TS + Vite + Tailwind v4 — 2 màn hình
 docs/ · evaluation/ · infra/    tài liệu · spike đo AI · Terraform
 ```
 
-Thêm loại chứng từ mới = 1 file trong `schemas/` + đăng ký vào `registry.py` +
-(nếu cần) vài rule trong `core/rules.py`. **Không** phải sửa prompt, Step
-Functions, API hay data model — prompt được **sinh ra từ registry**.
+Mọi loại chứng từ dùng chung một schema (`schemas/document.py`). Thêm loại mới =
+thêm tên vào `DOCUMENT_TYPES` trong `registry.py` + (nếu cần) vài rule trong
+`core/rules.py`. **Không** phải sửa Step Functions, API hay data model — danh
+sách loại trong prompt được **sinh ra từ registry**.
 
 ---
 
 ## 4. Chạy ở máy
 
-### 4.1 Yêu cầu
+Hai terminal: backend trước, frontend sau. Không cần tài khoản AWS — dev server
+giả lập AWS bằng `moto`.
 
-Python 3.11+ · Node 20+ · tài khoản Google Cloud (có $300 credit dùng thử).
-Không cần tài khoản AWS — dev server giả lập AWS bằng `moto`.
-
-### 4.2 Cài lần đầu
-
-```powershell
-git clone <repo> reconciliation-platform
-cd reconciliation-platform
-
-cd backend
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-
-cd ..\frontend
-npm install
-```
-
-Cài `requirements-dev.txt` chứ không phải `requirements.txt`: nó đã `-r` file
-kia rồi thêm `pytest`, `pyflakes` và `moto[s3,dynamodb,server]` — dev server bắt
-buộc phải có moto ở **chế độ server**, không dùng được bản in-process.
-
-### 4.3 Credential
-
-```powershell
-cd evaluation
-Copy-Item .env.example .env      # rồi điền GEMINI_API_KEY, DOCAI_PROJECT,
-                                 # DOCAI_OCR_PROCESSOR_ID
-```
-
-Chú thích từng biến nằm ngay trong `.env.example`; lấy giá trị ở đâu thì xem
-[evaluation/README.md](evaluation/README.md). `.env` đã gitignore.
-
-### 4.4 Cảnh báo: dev server gọi AI THẬT và tốn tiền thật
-
-> - **AWS thì giả, AI thì thật.** Chỉ hạ tầng AWS được `moto` giả lập; Document
->   AI và Gemini luôn gọi thật.
-> - **Thiếu credential thì thoát ngay lúc khởi động** (exit 2).
-> - Mặc định Enterprise Document OCR **$0,0015/trang** — 6 chứng từ mẫu (14
->   trang) ≈ **$0,021**, cộng ~$0,01 Gemini.
-> - **Bấm Xử lý lần hai không tốn thêm**: `/process` bỏ qua chứng từ đã `VALIDATED`.
-> - Nhưng `moto` giữ mọi thứ **trong RAM** — tắt là mất sạch, lần sau OCR lại từ
->   đầu và tốn tiền lại.
-
-### 4.5 Chạy — hai terminal
-
-```powershell
-# Terminal 1 — backend
-cd backend
-.venv\Scripts\python.exe -m devserver --upload ..\evaluation\dataset\documents
-
-# Terminal 2 — frontend
-cd frontend
-npm run dev
-```
-
-| | |
+| Phần | Hướng dẫn |
 |---|---|
-| Giao diện | http://localhost:5173 |
-| API | http://127.0.0.1:8000 |
-| AWS giả lập | http://127.0.0.1:5000 (moto) |
+| Backend: cài lần đầu, credential, lệnh chạy, tuỳ chọn, chi phí | [backend/devserver/README.md](backend/devserver/README.md) |
+| Frontend: cài, lệnh chạy, mô tả giao diện | [frontend/README.md](frontend/README.md) |
 
-Cờ `--upload` tạo sẵn project và upload sẵn file trong thư mục — **$0, vì upload
-không gọi AI**. Lưu ý `evaluation/dataset/documents/` **đã gitignore** nên rỗng
-khi mới clone: bỏ cờ này đi, hoặc tự bỏ file `.pdf` / `.png` / `.jpg` vào đó.
-
-Mô tả 3 tab của giao diện và cơ chế polling:
-[frontend/README.md](frontend/README.md).
+> **Dev server gọi AI THẬT và tốn tiền thật.** Chỉ hạ tầng AWS được giả lập;
+> Document AI và Gemini luôn gọi thật. Đơn giá và cách tránh tốn tiền lặp nằm ở
+> file backend ở trên.
 
 ---
 
@@ -189,21 +135,9 @@ Docker: [infra/statemachine-test/README.md](infra/statemachine-test/README.md).
 
 ## 6. Deploy lên AWS
 
-```powershell
-infra\scripts\build_backend.ps1          # -> 10 zip trong infra/artifacts/
-
-cd infra
-.\bin\terraform.exe init
-.\bin\terraform.exe plan  -var-file=dev.tfvars
-.\bin\terraform.exe apply -var-file=dev.tfvars
-```
-
-Tạo ra **10 Lambda** (4 `api` + 6 worker). Điều kiện cần trước đó: binary
-terraform tải sẵn vào `infra/bin/` · `aws configure` region `us-east-1` ·
-`dev.tfvars` điền từ `dev.tfvars.example`.
-
-**Hướng dẫn đầy đủ: [infra/README.md](infra/README.md)** — lấy credential, tạo
-processor, kiểm tra sau apply, xoá hạ tầng.
+Toàn bộ các bước — cài Terraform, credential, tạo processor, build 11 gói
+Lambda, `apply`, deploy frontend, kiểm tra sau apply, xoá hạ tầng — nằm ở
+[infra/README.md](infra/README.md).
 
 ---
 
@@ -212,8 +146,8 @@ processor, kiểm tra sau apply, xoá hạ tầng.
 | Tài liệu | Nội dung |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Kiến trúc, lý do chọn Step Functions và polling |
-| [docs/data-model.md](docs/data-model.md) | 5 bảng DynamoDB, GSI, layout S3 |
-| [docs/schemas.md](docs/schemas.md) | Schema từng loại chứng từ + danh sách rule đối chiếu |
+| [docs/data-model.md](docs/data-model.md) | 4 bảng DynamoDB, GSI, layout S3 |
+| [docs/schemas.md](docs/schemas.md) | Schema chung, danh sách cờ và rule đối chiếu |
 | [docs/iac-plan.md](docs/iac-plan.md) | Toàn bộ tài nguyên AWS và API surface |
 | [docs/observability.md](docs/observability.md) | Audit + monitoring 3 lớp, dashboard, cách mentor xem (đề xuất) |
 | [backend/devserver/README.md](backend/devserver/README.md) | Dev server, chi phí từng processor, dev/cloud tách nhau thế nào |
@@ -227,4 +161,4 @@ processor, kiểm tra sau apply, xoá hạ tầng.
 
 ## 8. Chưa làm
 
-WebSocket cho progress (hiện dùng polling, nâng cấp sau bằng DynamoDB Streams mà không phải sửa worker) · remote tfstate · dataset 50–100 tài liệu kèm ground truth · dark mode · phân trang · xoá project.
+WebSocket cho progress (hiện dùng polling, nâng cấp sau bằng DynamoDB Streams mà không phải sửa worker) · dataset 50–100 tài liệu kèm ground truth · tài liệu API dạng OpenAPI · test frontend · dark mode · phân trang.

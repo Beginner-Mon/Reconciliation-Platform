@@ -42,8 +42,15 @@ không chạy lại các file cũ. Đây là yêu cầu nghiệp vụ, không ph
 
 [4] Human Review (API độc lập, KHÔNG nằm trong Step Functions)
        GET   /projects/{id}                              poll 2s
-       PATCH /projects/{id}/documents/{doc_id}           sửa tay -> tự đối chiếu lại
+       PATCH /projects/{id}/documents/{doc_id}           sửa tay, KHÔNG tự đối chiếu;
+                                                         kết quả cũ thành is_stale
+       PUT   /projects/{id}/anchor                       đổi chứng từ gốc -> đối chiếu lại
        POST  /reconciliations/{id}/review                 {"decision": APPROVED|REJECTED}
+                                                         bị từ chối khi kết quả đã cũ
+
+[5] POST   /projects/{id}/process/stop       -> đặt cờ dừng trên run, không gọi Step Functions
+[6] DELETE /projects/{id}                    -> xoá hẳn project; đang chạy thì 409
+[7] DELETE /projects/{id}/documents/{doc_id} -> xoá một chứng từ rồi đối chiếu lại
 ```
 
 ### 3.1 Row DynamoDB sinh ra TRƯỚC khi file lên S3
@@ -170,9 +177,10 @@ Lambda file đã nằm sẵn đúng chỗ, ở máy local phải có bucket tạ
 
 ### 7.2 Extraction — Gemini (1 model + N schema)
 1 call vừa classify vừa extract, trả `{document_type, data, confidence}` theo
-structured output. **Prompt được sinh từ registry schema**
-(`schemas/registry.py`) — thêm loại chứng từ mới chỉ cần thêm file schema,
-không sửa prompt bằng tay.
+structured output. Khung JSON của `data` viết sẵn trong `PROMPT_TEMPLATE`
+(`common/ai_clients.py`) theo schema chung `schemas/document.py`; **danh sách
+loại chứng từ và mô tả trường sinh từ registry** (`schemas/registry.py`) — thêm
+loại mới là thêm tên vào `DOCUMENT_TYPES`, không sửa danh sách đó bằng tay.
 
 ### 7.3 Lỗi tạm thời
 429 / quota / 503 được bọc thành `RateLimitError` để Step Functions `Retry`
@@ -216,27 +224,31 @@ nữa, và giới hạn ~15 trang / 20MB chỉ áp lên bước `ocr`.
 
 | Tầng | File | Phạm vi |
 |---|---|---|
-| Schema + business rule | `core/validate.py` | **Trong 1 document** (`item_total == total_amount`) |
-| Cross-check | `core/rules.py` + `core/crosscheck.py` | **Giữa nhiều document** |
+| Schema + cờ nghiệp vụ | `core/validate.py` | **Trong 1 document**: cấu trúc theo schema chung, rồi các cờ (tiền tệ, ngày tương lai, định dạng mã số, dấu số tiền, số lượng). KHÔNG kiểm số học bằng công thức |
+| Cross-check | `core/crosscheck.py` + `core/compare.py` + `core/rules.py` | **Giữa nhiều document** |
 
 Cả hai đều **deterministic, không gọi AI** (rule cứng của project).
 
-Cross-check là **rule engine N-way**, không phải hàm `reconcile(PO, Invoice)`:
-mỗi rule tự khai báo cần loại document nào và **tự bỏ qua** khi không đủ. Thêm
-loại chứng từ thứ 4 = thêm 1 schema + vài rule, không sửa engine/Step
-Functions/API. Xem `docs/schemas.md` cho danh sách rule.
+Cross-check gom chứng từ thành nhóm theo số đơn hàng rồi chạy hai lớp. Nhóm có
+đúng 2 chứng từ thì **so cặp với chứng từ gốc** (`core/compare.py`): gốc do người
+dùng chọn qua `PUT /projects/{id}/anchor`, không chọn thì lấy theo vai trò
+(`order` trước, rồi `offer`, `delivery`, `billing`). Mọi nhóm đều chạy **rule
+engine N-way** (`core/rules.py`): mỗi rule tự khai báo cần loại document nào và
+**tự bỏ qua** khi không đủ. Chứng từ `role=other` hoặc loại `other`/`unknown`
+không được đem so, và được liệt kê trong `skipped_documents`. Xem
+`docs/schemas.md` cho danh sách rule.
 
 ## 9. Thành phần
 
 | Thành phần | Công nghệ | Ghi chú |
 |---|---|---|
 | Frontend | React (Vite) + **Amplify Hosting** (deploy thủ công bằng zip) | Đã làm |
-| API | API Gateway HTTP + **4 Lambda** + **Cognito JWT authorizer** | chia theo miền: projects · documents · review · process. **Có auth** (chỉ frontend chạy ở máy với `VITE_API_URL` localhost và thiếu `VITE_COGNITO_*` mới bỏ qua đăng nhập) |
+| API | API Gateway HTTP + **5 Lambda** + **Cognito JWT authorizer** | chia theo miền: projects · documents · review · process · anchor. **Có auth** (chỉ frontend chạy ở máy với `VITE_API_URL` localhost và thiếu `VITE_COGNITO_*` mới bỏ qua đăng nhập) |
 | Orchestration | Step Functions STANDARD | Map + retry + catch per-document |
 | Worker | 6 Lambda | ocr, extract, validate, reconcile, mark-failed, mark-run-failed |
 | Storage | S3 | gom hết dưới `projects/{project_id}/` |
 | Database | DynamoDB | 4 bảng, xem `data-model.md` |
-| AI | Document AI Form Parser + Gemini | Google Cloud |
+| AI | Document AI Enterprise Document OCR (mặc định) hoặc Amazon Textract, cộng Gemini | Google Cloud; AWS nếu chọn Textract |
 | IaC | Terraform | AWS + GCP providers |
 | Logging | CloudWatch | audit + monitoring: xem `observability.md` |
 

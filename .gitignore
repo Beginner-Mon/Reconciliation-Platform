@@ -56,3 +56,6 @@ frontend/.env.*
 
 # Rác của công cụ chạy thử
 .codex-*.json
+
+# Báo cáo đề án thực tập: bản nháp Word/PDF và script dựng, làm việc cục bộ
+report/

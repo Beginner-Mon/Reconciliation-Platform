@@ -5,7 +5,8 @@ state management.
 
 ## Chạy
 
-Cần **hai** terminal — frontend gọi API của dev server:
+Cần Node 20+ và **hai** terminal — frontend gọi API của dev server (cài và
+credential của backend: [backend/devserver/README.md](../backend/devserver/README.md)):
 
 ```powershell
 # 1. Backend
@@ -51,17 +52,22 @@ khi đang xử lý.
 - **Sidebar trái**: chỉ danh sách chứng từ (icon + tên) và nút Xử lý dưới cùng.
   Cố ý **không** có thanh tiến độ ở đây.
 - **Khung phải**: mọi thứ còn lại. Đang xử lý thì hiện sơ đồ tiến trình; xong thì
-  hiện file gốc bên trái + 3 tab bên phải. Vạch chia kéo được để đổi tỉ lệ, nút
+  hiện file gốc bên trái + 2 tab bên phải. Vạch chia kéo được để đổi tỉ lệ, nút
   « ẩn khung file gốc cho rộng chỗ đọc kết quả; lựa chọn được nhớ cho lần sau.
 
 | Tab | Nội dung |
 |---|---|
-| **Trích xuất** | các trường AI trích ra + text OCR thô (mở khi cần truy lỗi) |
-| **Cảnh báo** | mâu thuẫn xếp theo mức nghiêm trọng, nút duyệt/từ chối |
-| **Sửa** | sửa tay, tô vàng trường confidence thấp, lưu xong tự đối soát lại |
+| **Trích xuất & sửa** | các trường và bảng AI trích ra, sửa ngay trong ô; cờ cảnh báo của chứng từ; tô vàng trường confidence thấp |
+| **Cảnh báo** | mâu thuẫn giữa các chứng từ xếp theo mức nghiêm trọng, nút duyệt/từ chối |
 
-Tab **Trích xuất** đặt "OCR đọc ra gì" cạnh "AI hiểu thành gì" để biết lỗi nằm
-ở khâu đọc hay khâu hiểu — hai khâu đó sửa bằng hai cách khác nhau.
+File gốc vẽ bằng pdf.js (`PdfPages.tsx`) kèm khung chữ OCR (`PageOverlay.tsx`).
+Chọn một ô ở bên phải rồi bấm một khung chữ trên file gốc là giá trị của khung
+được điền vào ô; chưa chọn ô thì bấm khung chỉ để xem.
+
+Bấm **Lưu** mới gọi API: server validate lại và tính lại cờ. Lưu **không** chạy
+đối chiếu — kết quả đối chiếu cũ bị đánh dấu là cũ và nút duyệt/từ chối bị khoá
+cho tới khi bấm "Đối chiếu lại". Nút Duyệt còn bị khoá khi chứng từ còn cờ
+`ai_format` hoặc `vi_tri` chưa xử lý.
 
 ## Upload dùng presigned POST, không phải PUT
 
@@ -108,13 +114,15 @@ Xem [`evaluation/FINDINGS.md`](../evaluation/FINDINGS.md).
 ```
 src/
   types.ts      kiểu response API — cũng là tài liệu API
-  api.ts        12 endpoint + uploadFile()
+  api.ts        các lời gọi API + uploadFile()
+  auth.ts       lấy ID token Cognito (Amplify)
+  LoginGate.tsx cổng đăng nhập, bắt đổi mật khẩu lần đầu
   format.ts     tiền VND, ngày, nhãn tiếng Việt, màu theo mức nghiêm trọng
-  hooks/useProject.ts
+  hooks/        useProject.ts (poll tiến độ) · useReview.ts (tab Trích xuất & sửa)
+  review/       draft.ts (logic thuần của bản nháp) · cache.ts (giữ nháp 90 phút)
   pages/        ProjectList, ProjectDetail
-  components/   DocumentSidebar  WorkflowView  DocumentViewer  SplitPane
-                OcrPanel  EditPanel  DiscrepancyCard
-                ProgressBar
+  components/   DocumentSidebar  WorkflowView  DocumentViewer  SplitPane  PdfPages  PageOverlay
+                OcrText  ReviewPanel  ValidationFlags  DiscrepancyCard  ProgressBar
 ```
 
 ## Lệnh
@@ -127,5 +135,7 @@ npm run build       # ra thư mục dist/
 
 ## Chưa làm
 
-Đăng nhập · xem trước PDF trong trang · phân trang · xoá project · dark mode ·
-deploy lên S3/CloudFront (làm cùng `terraform apply`).
+Test frontend · phân trang · dark mode.
+
+Đã làm so với bản trước: đăng nhập (Cognito), xem PDF trong trang (pdf.js), xoá
+project, deploy (Amplify Hosting, xem `infra/README.md` §8).

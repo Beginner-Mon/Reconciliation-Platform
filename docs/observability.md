@@ -1,10 +1,10 @@
 # Observability — Audit & Monitoring
 
-> **Trạng thái: ĐÃ TRIỂN KHAI trong code, CHƯA deploy** (cập nhật 2026-09-16).
-> Audit đã là dòng JSON trên stdout (`common/audit.py`), bảng DynamoDB `audit_log`
-> **đã bỏ**, 10 log group giữ **10 năm** (`log_retention_days = 3653`) và dashboard đã khai trong Terraform
-> (`terraform validate` Success, 257 test xanh). **Chưa `terraform apply`**, nên
-> chưa có gì được xác minh trên AWS thật — xem §13.
+> **Trạng thái: đã triển khai trong code và đã deploy** (cập nhật 2026-10-07).
+> Audit là dòng JSON trên stdout (`common/audit.py`), bảng DynamoDB `audit_log`
+> **đã bỏ**, 11 log group giữ **10 năm** (`log_retention_days = 3653`) và dashboard khai trong Terraform.
+> Hệ thống đã chạy trên AWS (commit `485d239` sửa lỗi phát hiện trên cloud), nhưng
+> sáu bước xác minh ở §13 **chưa có ghi nhận kết quả** trong repo.
 
 ## 1. Ba câu hỏi khác nhau, ba công cụ khác nhau
 
@@ -54,7 +54,7 @@ trước, Grafana nối vào sau cũng được, không phải sửa worker.
 ```
 common/audit.py ── print 1 dòng JSON ──┐
 log_ai_call ── cùng dòng đó + khối EMF ─┤
-Lambda/SFN/API GW ── metric có sẵn ─────┼──▶ CloudWatch Logs (10 log group, giữ 10 năm)
+Lambda/SFN/API GW ── metric có sẵn ─────┼──▶ CloudWatch Logs (11 log group, giữ 10 năm)
                                         │            │
                                         │      Logs Insights
                                         ▼            ▼
@@ -118,6 +118,10 @@ Hiện "ai làm" đang nằm lồng trong `detail` dưới ba tên khác nhau (`
 | `PROJECT_DELETE_STARTED` | Bắt đầu xoá project — ghi trước khi xoá | ✅ |
 | `PROJECT_DELETED` | Xoá project xong, kèm số lượng đã xoá | ✅ |
 | `PROCESS_RUN_UNSTUCK` | Bấm Dừng trên run đã chết — run được kết thúc và nhả khoá ngay | ✅ |
+| `REVIEW_DISMISS` | Tắt lẻ một cờ cảnh báo trên chứng từ | ✅ |
+| `REVIEW_REOPEN` | Mở lại một cờ đã tắt | ✅ |
+| `DOCUMENT_DELETED` | Xoá một chứng từ khỏi project | ✅ |
+| `ANCHOR_CHANGED` | Đổi chứng từ gốc của project | ✅ |
 | `REQUEST_REJECTED` | Thao tác bị từ chối (400/404/409) ở bất kỳ route nào khác `GET` — ghi tại router (`api/handler.py`), kèm `method`, `path`, `status_code`, `error`. Thiếu nó thì "bấm Xử lý mà không thấy gì" không tra lại được | ✅ |
 
 ## 5. Metric AI (EMF)
@@ -198,7 +202,7 @@ Hai cái giá phải biết trước:
    metric của project khác trong account.
 2. **Widget log mặc định bị ẩn** với người được chia sẻ. Muốn mentor thấy bảng
    audit thì phải sửa tay policy của role `CWDBSharing*` do AWS tạo, thêm
-   `logs:StartQuery`/`GetQueryResults`/… và **giới hạn đúng ARN 10 log group** của
+   `logs:StartQuery`/`GetQueryResults`/… và **giới hạn đúng ARN 11 log group** của
    project này. Quên bước này thì mentor thấy biểu đồ nhưng bảng audit trống.
 
 Cũng vì lý do 1: **không chia sẻ công khai** (ai có link là có những quyền trên).
@@ -215,7 +219,7 @@ Logs cho phép, chọn theo hạn lưu tài liệu kế toán. Là biến Terraf
   Số khác (10, 15, 45…) làm `apply` **chết**, không làm tròn — nên biến có
   `validation` chặn ngay lúc `plan`.
 - Log group của Lambda mặc định **không bao giờ hết hạn** → vẫn phải khai
-  `aws_cloudwatch_log_group` cho cả 10 function để nắm quyền quyết định.
+  `aws_cloudwatch_log_group` cho cả 11 function để nắm quyền quyết định.
 - Log quá hạn có thể còn tới **72 giờ** trước khi bị xoá thật (tài liệu AWS).
 
 **10 năm đủ về THỜI GIAN, chưa đủ về BẤT BIẾN.** Luật Kế toán và Nghị định
@@ -252,9 +256,9 @@ log ingest nếu bật thêm access log của API Gateway.
 
 | Nhóm | Hạng mục |
 |---|---|
-| ✅ **AWS có sẵn** (0 dòng code) | Lambda tự đẩy stdout vào CloudWatch Logs (cả 5 role đã có `CreateLogGroup`/`CreateLogStream`/`PutLogEvents` — đủ để ghi, **không** có quyền xoá) · metric Lambda/Step Functions/API Gateway/DynamoDB · **execution history** của Step Functions (đồ thị, state lỗi, input/output) · automatic dashboard theo dịch vụ · Cost Explorer · CloudTrail event history 90 ngày |
-| ✅ **Đã làm xong trong code** | `actor`/`source`/`project_id` top-level · 3 action còn thiếu (§4) · EMF cho metric AI (§5) · bỏ bảng `audit_log` · 10 log group giữ 10 năm (biến `log_retention_days`) · dashboard 4 hàng (§6) + output `dashboard_url` |
-| 🔧 **Còn lại** | `terraform apply` rồi xác minh trên AWS thật (§13) — chưa làm thì chưa ai xem được gì |
+| ✅ **AWS có sẵn** (0 dòng code) | Lambda tự đẩy stdout vào CloudWatch Logs (cả 6 role đã có `CreateLogGroup`/`CreateLogStream`/`PutLogEvents` — đủ để ghi, **không** có quyền xoá) · metric Lambda/Step Functions/API Gateway/DynamoDB · **execution history** của Step Functions (đồ thị, state lỗi, input/output) · automatic dashboard theo dịch vụ · Cost Explorer · CloudTrail event history 90 ngày |
+| ✅ **Đã làm xong trong code** | `actor`/`source`/`project_id` top-level · 3 action còn thiếu (§4) · EMF cho metric AI (§5) · bỏ bảng `audit_log` · 11 log group giữ 10 năm (biến `log_retention_days`) · dashboard 4 hàng (§6) + output `dashboard_url` |
+| 🔧 **Còn lại** | Ghi lại kết quả sáu bước xác minh trên AWS thật (§13) |
 | ⏸ **Để sau, ngoài POC** | Alarm + SNS · lưu trữ dài hạn S3/Firehose/Athena · CloudTrail trail (chỉ cần nếu muốn giữ > 90 ngày) · access log API Gateway (thấy được request bị authorizer chặn — Lambda không bao giờ thấy) · Step Functions logging · X-Ray · Grafana |
 
 ## 11. Phương án đã loại
@@ -292,16 +296,16 @@ Kế hoạch ban đầu chia ba bước: **ghi kép** (giữ `put_item`, thêm d
 dashboard → bỏ bảng. Thực tế **bước ghi kép đã bị bỏ qua**: code đi thẳng tới
 đích, `put_item` bị xoá cùng lúc với việc thêm dòng JSON.
 
-**Đã đạt:** quyền của cả 5 role trên kho audit giờ chỉ là
+**Đã đạt:** quyền của cả 6 role trên kho audit giờ chỉ là
 `CreateLogGroup`/`CreateLogStream`/`PutLogEvents` — app **không sửa/xoá được vết
-của chính nó**, đúng tính chất mong muốn ở §3. Test (257) xanh, `pyflakes` sạch,
+của chính nó**, đúng tính chất mong muốn ở §3. Test xanh ở thời điểm đó, `pyflakes` sạch,
 `terraform validate` Success, `fmt -check` sạch.
 
 **Cái giá đã trả:** không còn bảng DynamoDB để đối chứng. Nếu Logs Insights không
 hiện đúng thứ cần, sẽ **không có nguồn thứ hai** để so. Vì vậy việc xác minh sau
 `apply` là **bắt buộc**, không phải tuỳ chọn:
 
-1. `terraform apply` (stack chưa apply lần nào → không cần import log group).
+1. `terraform apply` (đã chạy; xem dòng trạng thái đầu file).
 2. Chạy một lần `/process` với chứng từ thật.
 3. Logs Insights `filter audit = 1 | sort @timestamp desc`: phải có `PROCESS_RUN`,
    `PIPELINE_STEP`, `AI_CALL`; `actor` ở sự kiện từ API phải là **tên người đăng
@@ -311,6 +315,6 @@ hiện đúng thứ cần, sẽ **không có nguồn thứ hai** để so. Vì v
 5. Dashboard đủ 4 hàng, không widget nào trống. Widget chi phí dùng `period =
    86400`, nên nếu khoảng thời gian của dashboard đang là 3 giờ thì nó **trông như
    rỗng** — đổi range sang 1 tuần trước khi kết luận là lỗi.
-6. `aws logs describe-log-groups`: 10 log group, `retentionInDays: 3653`.
+6. `aws logs describe-log-groups`: 11 log group, `retentionInDays: 3653`.
 
 Chưa xong bước này thì tài liệu chỉ mô tả **ý định**, không mô tả hệ thống đang chạy.

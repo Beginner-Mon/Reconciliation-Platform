@@ -25,12 +25,14 @@ tính chất này là sai.
 ## 2. Ba endpoint, ba lifecycle
 
 ```
-[1] POST /projects/{id}/documents   -> N presigned PUT URL, frontend PUT thẳng lên S3
+[1] POST /projects/{id}/documents   -> N presigned POST (url + fields), frontend POST form thẳng lên S3
 [2] POST /projects/{id}/process     -> user chủ động; SKIP doc đã VALIDATED
 [3] POST /projects/{id}/reconcile   -> deterministic, KHÔNG đụng AI, gọi lại thoải mái
 [4] Human Review                    -> API độc lập, KHÔNG nằm trong Step Functions
 [5] POST /projects/{id}/process/stop -> đặt CỜ dừng trên run; KHÔNG gọi Step Functions
 [6] DELETE /projects/{id}            -> xoá hẳn project; đang chạy thì 409
+[7] DELETE /projects/{id}/documents/{doc_id} -> xoá một chứng từ rồi đối chiếu lại
+[8] PUT /projects/{id}/anchor        -> đổi chứng từ gốc của project rồi đối chiếu lại
 ```
 
 Full API surface: `docs/iac-plan.md` §3. Kịch bản chạy thật: `infra/README.md` §7.
@@ -39,17 +41,19 @@ Full API surface: `docs/iac-plan.md` §3. Kịch bản chạy thật: `infra/REA
 
 ```
 backend/
-  api/       handler.py (router theo template) + projects/documents/process/reconcile/review
+  api/       handler.py (router theo template) + projects/documents/process/reconcile/review/anchor
              http.py (response helper), views.py (serialize + progress)
   workers/   ocr, extract, validate, reconcile, mark_failed + steps.py (begin/finish/fail)
-  core/      validate.py (luật TRONG 1 doc) | rules.py + crosscheck.py (luật GIỮA nhiều doc)
+  core/      validate.py (luật TRONG 1 doc) | rules.py + compare.py + crosscheck.py (luật GIỮA nhiều doc)
              position.py (cờ vi_tri) | locate.py (ô nào lấy từ khung chữ nào)
-  common/    s3, dynamodb, stepfunctions, ai_clients, audit, errors, ids
-  schemas/   purchase_order, invoice, acceptance_record, unknown, registry.py
+             normalize.py (làm sạch output Gemini) | grounding.py (giá trị có trong text OCR không)
+  common/    s3, dynamodb, stepfunctions, ai_clients, audit, errors, ids, ocr_engines, textract, aws_real, reconcile_client
+  schemas/   document.py (schema chung, mọi loại dùng) + registry.py
+             purchase_order/invoice/acceptance_record/unknown: model cũ, không còn trong registry
   devserver/ chạy backend ở localhost (moto server, AI THẬT) — KHÔNG vào Lambda zip
-frontend/    React 19 + TS + Vite + Tailwind v4; 2 màn hình, gọi API dev server
-             src/review/draft.ts = logic thuần của tab "Trích xuất & sửa"; hooks/useReview.ts
   tests/     conftest.py (moto), test_validate, test_crosscheck, test_api, test_devserver
+frontend/    React 19 + TS + Vite + Tailwind v4; 2 màn hình, gọi API dev server
+              src/review/draft.ts = logic thuần của tab "Trích xuất & sửa"; hooks/useReview.ts
 docs/        architecture.md, data-model.md, schemas.md, iac-plan.md, observability.md
 evaluation/  spike đo chất lượng AI + FINDINGS.md
 infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Step Functions
@@ -77,6 +81,12 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
    `Discrepancy.values[]` chứa N document, không dùng `expected`/`actual`.
 6. **File chỉ vào hệ thống qua endpoint upload** — không discover S3 bằng
    `ListObjectsV2`.
+7. **Một schema chung cho mọi loại** (`schemas/document.py`). `role` của chứng từ
+   và `role` của cột bảng quyết định cái gì so được với cái gì; `document_type`
+   là nhãn do AI gán và phải có trong `DOCUMENT_TYPES`.
+8. **Nhóm có đúng 2 chứng từ thì so cặp với chứng từ gốc** (`core/compare.py`).
+   Gốc do người dùng chọn (`PUT /projects/{id}/anchor`), không chọn thì lấy theo
+   vai trò `order → offer → delivery → billing`. Nhóm lớn hơn chỉ chạy rule cộng dồn.
 
 ## 5. Bẫy đã xử lý — đừng phá
 
@@ -92,9 +102,13 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   chuyển Decimal. `confidence` của Gemini là float nên chỗ này bắt buộc.
 - `po_number` nhân bản lên **top-level** vì GSI không index được attribute lồng;
   chỉ ghi khi có giá trị (giữ GSI sparse).
-- `AcceptedItem` tách khỏi `LineItem` vì biên bản nghiệm thu không có đơn giá.
-- Prompt Gemini **sinh từ registry**, không viết tay — v1 từng lệch giữa
-  `SUPPORTED_DOC_TYPES` và nội dung prompt.
+- `AcceptedItem`/`LineItem` là model CŨ (`schemas/acceptance_record.py`,
+  `purchase_order.py`), không còn trong registry. Schema chung dùng `tables` với
+  vai trò cột; biên bản nghiệm thu không có đơn giá thì đơn giản là không có cột
+  `unit_price`.
+- **Danh sách loại** trong prompt Gemini sinh từ registry, không viết tay — v1
+  từng lệch giữa `SUPPORTED_DOC_TYPES` và nội dung prompt. Khung JSON của `data`
+  thì viết sẵn trong `PROMPT_TEMPLATE` (`common/ai_clients.py`) theo schema chung.
 - **KHÔNG** đặt `response_schema` với `"data": {"type":"OBJECT"}` rỗng — Gemini
   hiểu là "không có trường nào" và luôn trả `{}`. Đo thật: 31 token vs 447 token.
   Ràng buộc kiểu để Pydantic lo. Xem `tests/test_ai_config.py`.
@@ -146,8 +160,9 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   bên `main.tf`. Mỗi gói khai `modules` (chép đúng code nó chạy) và `requires`
   (đúng thư viện nó cần).
   `boto3` KHÔNG vào gói nào (runtime Lambda đã có, 20 MB), nhưng vẫn ở
-  `requirements.txt` cho dev server. Đo được: 340 MB → 39,6 MB, `mark-failed`
-  0,1 MB, bốn `api-*` 2,5 MB. Cái tiết kiệm là **cold start**, KHÔNG phải phân
+  `requirements.txt` cho dev server. Đo được lúc còn 10 gói: 340 MB → 39,6 MB.
+  Nay 11 gói (thêm `api-anchor`), tổng 42,2 MB, năm `api-*` mỗi gói 2,5 MB,
+  `mark-failed` 0,03 MB. Cái tiết kiệm là **cold start**, KHÔNG phải phân
   quyền — IAM gắn vào function chứ không gắn vào gói, và 5 role đã tách sẵn.
 - `common/__init__.py` và `workers/__init__.py` phải **RỖNG** — import thẳng
   submodule (`from common.dynamodb import ...`). `common/__init__` từng
@@ -219,10 +234,10 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 - `AgreeRule`/`NumericRule` trong `core/rules.py` lọc theo **TRƯỜNG**, không theo
   **LOẠI** — hễ hai chứng từ cùng có `currency`/`total_amount` là đem ra so, bất
   kể là gì. Nên câu "rule cũ tự bỏ qua loại mới" **chỉ đúng với rule khai rõ
-  loại** (LineItem/QuantityCoverage/ReferenceExists). Loại `unknown` vì vậy bị
-  chặn ở tầng LOẠI bằng `NON_COMPARABLE_TYPES` trong `core/crosscheck.py`, chứ
-  không phải bằng cách bớt trường trong schema. Thêm loại mới nào không so sánh
-  được thì thêm vào set đó. Chạy thật mới lộ: 2 chứng từ của 2 lô hàng khác nhau
+  loại** (LineItem/QuantityCoverage/ReferenceExists). Chứng từ không so được vì
+  vậy bị chặn ngay ở `build_refs` trong `core/crosscheck.py` (`role == "other"`
+  hoặc loại `other`/`unknown`) và được liệt kê trong `skipped_documents`, chứ
+  không phải bằng cách bớt trường trong schema. Chạy thật mới lộ: 2 chứng từ của 2 lô hàng khác nhau
   bị báo "lệch tiền 43 triệu".
 - `DOCUMENT_TYPE_LABELS` đọc **cho người** (`core/rules.py` in vào giải thích
   mâu thuẫn). Chỉ dẫn cho Gemini để ở `DOCUMENT_TYPE_PROMPT_NOTES`. Gộp hai bảng
@@ -423,13 +438,14 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 
 ## 6. Thêm loại chứng từ mới
 
-Thêm `schemas/<loại>.py` → đăng ký vào `schemas/registry.py` → thêm rule ở
-`core/rules.py` nếu cần. Chứng từ không khớp loại nào rơi vào `unknown`
-(`schemas/unknown.py`) — mọi trường tùy chọn, đi hết pipeline nhưng gần như
-không kiểm tra được gì. Nhãn của `unknown` trong `DOCUMENT_TYPE_LABELS` viết
+Mọi loại dùng chung schema `Document` (`schemas/document.py`). Thêm loại = thêm
+tên vào `DOCUMENT_TYPES` trong `schemas/registry.py` (thêm cả `DATE_FIELD_BY_TYPE`
+và `NUMBER_FIELD_BY_TYPE` nếu muốn rule ngày và rule trùng số hiệu áp dụng) →
+thêm rule ở `core/rules.py` nếu cần. Chứng từ không khớp loại nào rơi vào `unknown`
+— đi hết pipeline nhưng không được đem đối chiếu. Nhãn của `unknown` trong `DOCUMENT_TYPE_LABELS` viết
 như một mệnh lệnh và nó phải đứng **CUỐI** `DOCUMENT_TYPES`: prompt sinh theo
 đúng thứ tự đó, đảo lên đầu là Gemini không phân loại đúng nữa. **Không** phải sửa prompt, Step Functions, API, data
-model. Rule cũ tự bỏ qua loại mới. Xem `docs/schemas.md` §1.
+model. Rule cũ tự bỏ qua loại mới. Xem `docs/schemas.md` §2.
 
 ## 7. Quy ước kỹ thuật (rule cứng)
 
@@ -462,7 +478,7 @@ cd backend;  .venv\Scripts\python.exe -m devserver --upload ..\evaluation\datase
 cd frontend; npm run dev                                      # UI  :5173
 
 # Test backend — PHẢI chạy từ trong backend/ (import cần CWD ở đó)
-cd backend; .venv\Scripts\python.exe -m pytest -q          # 86 test, offline
+cd backend; .venv\Scripts\python.exe -m pytest -q          # 447 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy
@@ -470,7 +486,7 @@ cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers
 cd infra; .\bin\terraform.exe init -backend=false; .\bin\terraform.exe validate
 cd infra; .\bin\terraform.exe plan -var-file=dev.tfvars
 
-infra\scripts\build_backend.ps1        # -> 10 zip, MỖI Lambda một gói riêng
+infra\scripts\build_backend.ps1        # -> 11 zip, MỖI Lambda một gói riêng
 ```
 
 Terraform **không** cài được vào `.venv` — `.venv` chỉ chứa package PyPI, còn

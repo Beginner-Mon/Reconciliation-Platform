@@ -47,7 +47,9 @@ chỉ giữ trường cần truy vấn và summary.
   "document_count": 3,
   "processing_run_id": "run-...",
   "last_run_id": "run-...",
-  "latest_reconciliation_id": "rec-..."
+  "latest_reconciliation_id": "rec-...",
+  "anchor_document_ids": ["doc-2026-0001"],
+  "anchor_updated_at": "2026-08-17T10:05:00Z"
 }
 ```
 
@@ -60,6 +62,10 @@ không project kẹt vĩnh viễn.
 Có nó thì `/process` và upload trả 409; `claim_processing_run` cũng từ chối bằng
 điều kiện `attribute_not_exists(deleting_at)`. Xoá hỏng giữa chừng thì record
 project còn lại kèm cờ này — gọi xoá lại để hoàn tất.
+
+`anchor_document_ids` do `PUT /projects/{id}/anchor` ghi: chứng từ gốc mà các
+chứng từ khác trong nhóm được so với. Không có thì đối chiếu tự chọn gốc theo
+vai trò (xem `schemas.md` §6.3).
 
 ## 3. `documents`
 
@@ -82,12 +88,17 @@ project còn lại kèm cờ này — gọi xoá lại để hoàn tất.
   "attempt": 1,
 
   "document_type": "invoice",
+  "ocr_engine": "dococr",
   "po_number": "PO-2026-001",
+  "doc_number": "INV-001",
+  "order_reference": "PO-2026-001",
   "ocr_s3_key": "projects/prj-.../ocr/doc-....json",
   "extraction_s3_key": "projects/prj-.../extraction/doc-....json",
-  "extraction": { "invoice_number": "INV-001", "...": "..." },
-  "confidence": { "vendor": 0.99, "total_amount": 0.87 },
-  "validation": { "valid": true, "schema_errors": [], "rule_errors": [] },
+  "extraction": { "doc_number": "INV-001", "role": "billing", "...": "..." },
+  "confidence": { "seller": 0.99, "total_amount": 0.87 },
+  "validation": { "valid": true, "schema_errors": [], "rule_errors": [],
+                  "warnings": [], "flags": [], "comparison_incomplete": false },
+  "dismissed_flags": [],
 
   "edited_fields": ["vendor"],
   "edited_at": "2026-08-17T10:00:00Z",
@@ -111,6 +122,12 @@ attribute lồng trong map.
 
 `edited_fields` khác rỗng nghĩa là người đã sửa tay → `/process` **bỏ qua**
 document này ngay cả khi `force=true`, trừ khi truyền thêm `force_edited=true`.
+
+Các trường khác trên record: `ocr_engine` (engine đã chạy), `dismissed_flags`
+(cờ người dùng đã tắt lẻ), `sources` (ô nào lấy từ khung chữ OCR nào, chỉ có
+sau khi người dùng Lưu), `position_issues` và `format_issues` (đầu vào của cờ
+`vi_tri` và `ai_format`), `document_payload_s3_key` (khi payload đã chuyển sang
+S3, xem đầu file).
 
 ### GSI
 
@@ -157,7 +174,8 @@ reconciliation.
   "groups": [
     { "key": "PO-2026-001",
       "document_ids": ["doc-a", "doc-b", "doc-c"],
-      "document_types": ["acceptance_record", "invoice", "purchase_order"] }
+      "document_types": ["acceptance_record", "invoice", "purchase_order"],
+      "anchor_document_id": "doc-a" }
   ],
   "skipped_documents": [],
   "status": "PENDING_REVIEW",
@@ -185,7 +203,7 @@ Mỗi sự kiện là một dòng JSON trên stdout:
 
 | Action | Ghi khi |
 |---|---|
-| `AI_CALL` | Mỗi lần gọi Document AI/Gemini — **rule cứng**, ghi cả khi lỗi và rate limit |
+| `AI_CALL` | Mỗi lần gọi Document AI/Textract/Gemini — **rule cứng**, ghi cả khi lỗi và rate limit |
 | `PIPELINE_STEP` | Vào/xong/lỗi từng bước, có `attempt` |
 | `PROCESS_RUN` | Mọi quyết định của `/process`, kể cả quyết định **bỏ qua** |
 | `EDIT_OVERWRITTEN` | `force_edited=true` cho AI ghi đè dữ liệu người đã sửa tay |
@@ -198,6 +216,11 @@ Mỗi sự kiện là một dòng JSON trên stdout:
 | `PROJECT_DELETE_STARTED` | Bắt đầu xoá project — ghi TRƯỚC khi xoá: tên, chứng từ, id run/reconciliation |
 | `PROJECT_DELETED` | Xoá project xong — số lượng thật đã xoá |
 | `PROCESS_RUN_UNSTUCK` | Bấm Dừng trên run đã chết, run được kết thúc ngay |
+| `REVIEW_DISMISS` | Tắt lẻ một cờ cảnh báo |
+| `REVIEW_REOPEN` | Mở lại một cờ đã tắt |
+| `DOCUMENT_DELETED` | Xoá một chứng từ |
+| `ANCHOR_CHANGED` | Đổi chứng từ gốc của project |
+| `REQUEST_REJECTED` | Thao tác bị từ chối (400/404/409) ở route khác `GET` |
 
 Chi tiết: `observability.md`.
 
@@ -210,4 +233,5 @@ projects/{project_id}/uploads/{document_id}.{pdf|png|jpg}
 projects/{project_id}/ocr/{document_id}.json
 projects/{project_id}/extraction/{document_id}.json
 projects/{project_id}/reconciliation/{reconciliation_id}.json
+projects/{project_id}/document-payload/{document_id}/{uuid}.json
 ```

@@ -1,6 +1,6 @@
 # Dev server — chạy toàn bộ backend ở máy
 
-Dựng đủ 12 endpoint ở `localhost`, **không cần AWS**. Dùng để làm frontend và
+Dựng đủ 15 endpoint ở `localhost`, **không cần AWS**. Dùng để làm frontend và
 click thử luồng nghiệp vụ trước khi deploy.
 
 ```powershell
@@ -12,6 +12,21 @@ cd backend
 API          : http://127.0.0.1:8000
 AWS giả lập  : http://127.0.0.1:5000   (moto server)
 ```
+
+## Cài lần đầu
+
+Python 3.11+ và một tài khoản Google Cloud (có $300 credit dùng thử). Không cần
+tài khoản AWS.
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+Cài `requirements-dev.txt` chứ không phải `requirements.txt`: nó đã `-r` file
+kia rồi thêm `pytest`, `pyflakes` và `moto[s3,dynamodb,server]` — dev server bắt
+buộc phải có moto ở **chế độ server** (lý do ở mục bên dưới).
 
 ## AWS thì giả, AI thì THẬT
 
@@ -29,6 +44,14 @@ in rõ thiếu biến nào. Không có đường lui.
 Điền vào `evaluation/.env` (đã gitignore):
 `DOCAI_PROJECT`, `DOCAI_OCR_PROCESSOR_ID`, `GEMINI_API_KEY`,
 `GOOGLE_APPLICATION_CREDENTIALS`.
+
+```powershell
+cd evaluation
+Copy-Item .env.example .env      # rồi điền các biến trên
+```
+
+Chú thích từng biến nằm ngay trong `.env.example`; lấy giá trị ở đâu thì xem
+[evaluation/README.md](../../evaluation/README.md).
 
 ## Tuỳ chọn
 
@@ -84,15 +107,15 @@ nào trong `api/`, `workers/`, `core/`, `common/`, `schemas/`.
 |---|---|---|
 | `core/`, `schemas/`, `api/`, `workers/`, `common/` | **y hệt** | **y hệt** |
 | Vận chuyển | `http_server.py` | API Gateway |
-| Cửa vào API | **1** — `lambda_handler` gộp đủ 12 route | **4** Lambda chia theo miền |
+| Cửa vào API | **1** — `lambda_handler` gộp đủ 15 route | **5** Lambda chia theo miền |
 | Điều phối | `pipeline.py` | Step Functions |
 | Hạ tầng AWS | moto server | AWS thật |
 | AI | **Document AI + Gemini thật** | Document AI + Gemini |
 
-Chỗ "1 cửa vs 4 cửa" là **khác biệt duy nhất còn lại** ngoài vận chuyển/điều
-phối, và nó nằm ở tầng entry point chứ không phải tầng nghiệp vụ: cloud chia 4
+Chỗ "1 cửa vs 5 cửa" là **khác biệt duy nhất còn lại** ngoài vận chuyển/điều
+phối, và nó nằm ở tầng entry point chứ không phải tầng nghiệp vụ: cloud chia 5
 Lambda để thu hẹp IAM (chỉ `api-process` có `states:StartExecution`), còn ở máy
-thì không có IAM nên chia làm gì. Bốn handler miền và `lambda_handler` gộp đều
+thì không có IAM nên chia làm gì. Năm handler miền và `lambda_handler` gộp đều
 sinh từ **cùng một bảng route** trong `api/handler.py`, nên không thể lệch nhau —
 `tests/test_routes.py` khoá luôn cả việc đó.
 
@@ -123,16 +146,18 @@ preflight trả 204.
 POST   /projects                                  tạo project
 GET    /projects                                  danh sách
 GET    /projects/{id}                             chi tiết + tiến độ  (poll 2s)
+DELETE /projects/{id}                             xoá hẳn project (đang chạy -> 409)
 POST   /projects/{id}/documents                   xin presigned POST URL
-GET    /projects/{id}/documents/{doc_id}/ocr      text OCR thô + confidence từng dòng
 GET    /projects/{id}/documents                   danh sách document
+GET    /projects/{id}/documents/{doc_id}/ocr      text OCR thô + confidence từng dòng + layout
+DELETE /projects/{id}/documents/{doc_id}          xoá một chứng từ
 POST   /projects/{id}/process                     chạy xử lý (skip doc đã xong)
 POST   /projects/{id}/process/stop                dừng run đang chạy (đặt cờ, không gọi AI thêm)
-DELETE /projects/{id}                             xoá hẳn project (đang chạy -> 409)
 POST   /projects/{id}/reconcile                   đối chiếu lại
-PATCH  /projects/{id}/documents/{doc_id}          sửa tay + đối chiếu lại
+PATCH  /projects/{id}/documents/{doc_id}          sửa tay / tắt-mở cờ / gắn khung chữ; KHÔNG tự đối chiếu
+PUT    /projects/{id}/anchor                      đổi chứng từ gốc, đối chiếu lại
 GET    /reconciliations/{id}                      kết quả đối chiếu đầy đủ
-POST   /reconciliations/{id}/approve | /reject    duyệt / từ chối
+POST   /reconciliations/{id}/review               {"decision": "APPROVED" | "REJECTED"}
 ```
 
 Tiến độ nằm ở `GET /projects/{id}` → `progress.progress_percent` (tính theo
@@ -146,3 +171,5 @@ file — và **xử lý lại sẽ tốn tiền OCR lại**, vì kết quả cũ
 cũng mất theo.
 
 Dùng `--upload <thư mục>` để khỏi phải kéo tay từng file sau mỗi lần khởi động.
+Lưu ý `evaluation/dataset/documents/` **đã gitignore** nên rỗng khi mới clone:
+bỏ cờ này đi, hoặc tự bỏ file `.pdf` / `.png` / `.jpg` vào đó.

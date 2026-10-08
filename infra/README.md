@@ -83,9 +83,10 @@ account này.
 Copy-Item dev.tfvars.example dev.tfvars
 ```
 
-Mở `dev.tfvars`, dán vào 2 chỗ đánh dấu:
+Mở `dev.tfvars`, dán vào các chỗ đánh dấu:
 - `gcp_project_id` = project ID Google Cloud
-- `gcp_docai_processor_id` = processor ID ở bước 3
+- `gcp_docai_ocr_processor_id` = ID của processor **Document OCR** tạo ở bước 3.1
+- `gemini_api_key` = key lấy ở bước 2
 
 ## 5. Build code backend thành zip
 
@@ -93,7 +94,7 @@ Mở `dev.tfvars`, dán vào 2 chỗ đánh dấu:
 powershell -ExecutionPolicy Bypass -File .\scripts\build_backend.ps1
 ```
 
-Tạo ra 10 file `artifacts/<tên function>.zip` — mỗi Lambda một gói riêng, chỉ
+Tạo ra 11 file `artifacts/<tên function>.zip` — mỗi Lambda một gói riêng, chỉ
 chứa thư viện nó cần. `boto3` không nằm trong gói nào vì runtime Lambda đã có.
 
 ## 5b. State remote (bắt buộc trước deploy prod)
@@ -105,18 +106,22 @@ cd infra\bootstrap
 ..\bin\terraform.exe init
 ..\bin\terraform.exe apply              # copy output backend_hcl thành infra\backend.hcl
 cd ..
-.\bin\terraform.exe init -reconfigure -backend-config=backend.hcl
+.\bin\terraform.exe init -reconfigure "-backend-config=backend.hcl"
 ```
+
+Tham số có dấu chấm **phải bọc nháy** như trên. PowerShell 5.1 cắt
+`-var-file=prod.tfvars` thành `-var-file=prod` và `.tfvars`, terraform báo
+"Too many command line arguments".
 
 `prod.tfvars` copy từ `dev.tfvars`, đổi `env = "prod"`.
 
 ## 6. Deploy
 
 ```powershell
-terraform init -reconfigure -backend-config=backend.hcl
-terraform validate                      # kiểm cú pháp, không cần credential
-terraform plan -var-file=prod.tfvars    # xem trước thay đổi
-terraform apply -var-file=prod.tfvars   # gõ "yes" để triển khai
+terraform init -reconfigure "-backend-config=backend.hcl"
+terraform validate                        # kiểm cú pháp, không cần credential
+terraform plan "-var-file=prod.tfvars"    # xem trước thay đổi
+terraform apply "-var-file=prod.tfvars"   # gõ "yes" để triển khai
 ```
 
 Trước khi apply, nên kiểm luồng Step Functions mà **không cần deploy** — xem
@@ -137,9 +142,10 @@ $api = terraform output -raw api_url
 # 1. Tạo project
 POST {api_url}/projects                      {"name": "Gói thầu A"}
 
-# 2. Xin presigned URL rồi PUT file thẳng lên S3
+# 2. Xin presigned POST rồi gửi form thẳng lên S3 (KHÔNG phải PUT)
 POST {api_url}/projects/{id}/documents       {"files":[{"file_name":"PO-001.pdf"},{"file_name":"INV-001.pdf"}]}
-PUT  {upload_url}                            <nội dung file>
+#    -> mỗi file trả về upload.url và upload.fields
+POST {upload.url}                            multipart/form-data: mọi trường trong upload.fields TRƯỚC, `file` SAU CÙNG
 
 # 3. User chủ động chạy xử lý (chỉ xử lý document CHƯA xử lý)
 POST {api_url}/projects/{id}/process         {} | {"document_ids":[...], "force":false}
@@ -152,8 +158,10 @@ POST {api_url}/projects/{id}/reconcile
 
 # 6. Human Review
 GET   {api_url}/reconciliations/{reconciliation_id}
-PATCH {api_url}/projects/{id}/documents/{document_id}   {"fields":{"vendor":"ABC Technology"}}
-POST  {api_url}/reconciliations/{reconciliation_id}/review   {"decision":"APPROVED"}
+PATCH {api_url}/projects/{id}/documents/{document_id}   {"fields":{"seller":"ABC Technology"}}
+#     PATCH không tự đối chiếu: kết quả cũ thành is_stale, phải đối chiếu lại rồi mới duyệt được
+POST  {api_url}/projects/{id}/reconcile
+POST  {api_url}/reconciliations/{reconciliation_id mới}/review   {"decision":"APPROVED"}
 ```
 
 Thêm document vào project đã xử lý: lặp lại bước 2 → 3. Bước 3 **chỉ OCR file
@@ -193,7 +201,7 @@ Script không cầm mật khẩu — Cognito tự sinh mật khẩu tạm và g�
 ## Xóa hạ tầng (cẩn thận)
 
 ```powershell
-terraform destroy -var-file=dev.tfvars
+terraform destroy "-var-file=dev.tfvars"
 ```
 
 ## Lưu ý

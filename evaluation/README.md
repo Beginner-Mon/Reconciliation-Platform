@@ -2,17 +2,18 @@
 
 Trả lời câu hỏi quyết định kiến trúc: **dùng processor Document AI nào?**
 
-> **Production chỉ dùng MỘT processor.** [`workers/ocr.py`](../backend/workers/ocr.py)
-> có đúng một lời gọi `ocr_with_document_ai()`, hiện trỏ tới Form Parser qua
-> `DOCAI_PROCESSOR_ID`. Thư mục này chạy nhiều processor trên **cùng một ảnh**
-> chỉ để so sánh rồi **chọn một** — giống thử ba cái thước trên cùng một vật.
-> Đo xong, production vẫn một.
+> **Đã chốt (2026-10-05): app dùng Enterprise Document OCR (`dococr`) làm mặc
+> định**, Textract chọn được cho từng chứng từ. [`workers/ocr.py`](../backend/workers/ocr.py)
+> tra engine trong [`common/ocr_engines.py`](../backend/common/ocr_engines.py).
+> Thư mục này chạy nhiều engine trên **cùng một ảnh** để so sánh — giống thử
+> nhiều cái thước trên cùng một vật. Phần dưới giữ nguyên cách đặt vấn đề lúc
+> bắt đầu spike (khi hệ thống còn dùng Form Parser); kết quả ở `FINDINGS.md`.
 >
 > Ngài **không cần tạo cả ba processor**. Tạo một cái, chạy `--ocr <tên>`.
 
 ## Câu hỏi spike phải trả lời
 
-**Hệ thống đang trả $30/1.000 trang cho Form Parser rồi vứt đi đúng cái làm nó đắt.**
+**Lúc bắt đầu spike, hệ thống trả $30/1.000 trang cho Form Parser rồi vứt đi đúng cái làm nó đắt.**
 
 Form Parser đắt hơn Enterprise Document OCR 20 lần vì nó cho thêm key-value
 pairs, bảng và selection mark. Nhưng [`_build_ocr_text()`](../backend/common/ai_clients.py)
@@ -28,7 +29,7 @@ từ đầu — key-value pairs không được dùng như dữ liệu có cấu
 |---|---|---|
 | **Enterprise Document OCR** | **$1,50** | text + **bounding box** block/dòng/từ/symbol, checkbox, font |
 | Layout Parser | $10 | + cấu trúc layout |
-| **Form Parser** (đang dùng) | **$30** | + key-value pairs, bảng, selection mark |
+| **Form Parser** (dùng lúc bắt đầu spike) | **$30** | + key-value pairs, bảng, selection mark |
 | Custom Extractor | $30 | + **phát hiện chữ ký** |
 
 Gemini 2.5 Flash: $0,30/1M input, $2,50/1M output, **có free tier**
@@ -52,13 +53,13 @@ Với dataset 100 tài liệu × 2 trang: Form Parser **$6,34** so với Documen
 Ngược lại, **bảng và trường điền form là thứ Document OCR không có** — mà line
 item của PO/hóa đơn lại nằm trong bảng. Đây chính là lý do phải đo chứ không đoán.
 
-## Năm luồng đem so
+## Bảy luồng đem so
 
 | Tên | Mô tả | Env cần thêm |
 |---|---|---|
-| `formparser_gemini` | Form Parser → Gemini (**luồng hiện tại**) | `DOCAI_PROCESSOR_ID` |
+| `formparser_gemini` | Form Parser → Gemini (**luồng lúc bắt đầu spike**) | `DOCAI_PROCESSOR_ID` |
 | `layout_gemini` | Layout Parser → Gemini. Bảng phức tạp, giá giữa | `DOCAI_LAYOUT_PROCESSOR_ID` |
-| `dococr_gemini` | Document OCR → Gemini. Rẻ nhất, **không có bảng/KV** | `DOCAI_OCR_PROCESSOR_ID` |
+| `dococr_gemini` | Document OCR → Gemini. Rẻ nhất, **không có bảng/KV** (**luồng app đang dùng**) | `DOCAI_OCR_PROCESSOR_ID` |
 | `formparser_kv_only` | Chỉ key-value Form Parser, không gọi LLM | `DOCAI_PROCESSOR_ID` |
 | `gemini_direct` | Gemini đọc thẳng file, **không có OCR** | — |
 | `textract_gemini` | Textract DetectDocumentText → Gemini. $0,0015, **ngang giá `dococr`** | `TEXTRACT_S3_BUCKET` |
@@ -213,9 +214,11 @@ Document OCR **$0,0075**. Tài khoản GCP mới có $300 credit.
 | `dococr` | Enterprise Document OCR — **OCR thật** | `DOCAI_PROJECT` + `DOCAI_OCR_PROCESSOR_ID` + đăng nhập GCP |
 | `formparser` | Form Parser — **OCR thật** | `DOCAI_PROJECT` + `DOCAI_PROCESSOR_ID` + đăng nhập GCP |
 | `layout` | Layout Parser — **OCR thật** | `DOCAI_PROJECT` + `DOCAI_LAYOUT_PROCESSOR_ID` + đăng nhập GCP |
+| `textract` | Textract DetectDocumentText — **OCR thật**, không hỗ trợ tiếng Việt | credential AWS + `TEXTRACT_S3_BUCKET` |
+| `textract-analyze` | Textract AnalyzeDocument — **OCR thật**, không hỗ trợ tiếng Việt | credential AWS + `TEXTRACT_S3_BUCKET` |
 | `gemini_direct` | **KHÔNG PHẢI OCR** — Gemini nhìn thẳng ảnh | `GEMINI_API_KEY` |
 
-**Ba engine OCR không dùng Gemini.** `GEMINI_API_KEY` chỉ cần cho bước trích
+**Các engine OCR không dùng Gemini.** `GEMINI_API_KEY` chỉ cần cho bước trích
 xuất (bỏ qua bằng `--ocr-only`) và cho `gemini_direct`. Thiếu engine nào thì báo
 rõ rồi bỏ qua, không hỏng cả lần chạy.
 
@@ -355,7 +358,9 @@ và `0` coi là bằng nhau; còn lại so số qua `scoring.normalize`.
 
 ## Quyết định thế nào
 
-Mốc là `formparser_gemini` (luồng hiện tại). Nhìn **`field_hay_sai`** chứ không
+> **Đã quyết (2026-10-05):** chọn `dococr`. Bảng dưới là tiêu chí lúc lập kế hoạch đo.
+
+Mốc lúc lập bảng này là `formparser_gemini`. Nhìn **`field_hay_sai`** chứ không
 chỉ nhìn con số tổng:
 
 | Kết quả quan sát | Kết luận |
@@ -366,9 +371,9 @@ chỉ nhìn con số tổng:
 | Form Parser thắng rõ ở mọi mặt | Giữ nguyên. Ghi vào báo cáo: trả thêm 20 lần chi phí đổi lấy bao nhiêu điểm chính xác |
 | Chứng từ có **chữ viết tay** đọc kém ở mọi luồng | Cân nhắc chạy Document OCR **song song** riêng cho phần chữ tay (nó best-in-class khoản này) |
 
-Đổi processor thì **phải** đổi `DOCAI_USD_PER_PAGE` trong Lambda env, nếu không
-chi phí ghi vào `audit_log` sẽ sai — rule cứng của project yêu cầu lưu vết chi
-phí đúng.
+Đơn giá của mỗi engine nằm cùng bảng với hàm gọi trong
+`backend/common/ocr_engines.py`, nên đổi engine là chi phí ghi vào dòng audit
+`AI_CALL` đổi theo — rule cứng của project yêu cầu lưu vết chi phí đúng.
 
 Khoảng cách giữa cột **chính xác** và **bỏ dấu** cho biết OCR đọc dấu tiếng Việt
 tệ đến đâu. Nếu khoảng cách này lớn ở mọi luồng thì vấn đề nằm ở chất lượng ảnh
