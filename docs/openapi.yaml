@@ -1,0 +1,1361 @@
+openapi: 3.0.3
+info:
+  title: AI Document Intelligence & Reconciliation Platform API
+  version: 1.0.0
+  description: |
+    API của hệ thống trích xuất, kiểm tra và đối soát chứng từ.
+
+    - Mọi đường dẫn đều cần mã đăng nhập: header `Authorization: Bearer <ID token của Cognito>`.
+      Phải là **ID token**, không phải access token.
+    - Thân yêu cầu và phản hồi đều là JSON. Lỗi do ứng dụng trả có dạng `{"error": "..."}`.
+    - File KHÔNG gửi qua API này. `POST /projects/{project_id}/documents` trả về một địa chỉ
+      tải lên có chữ ký (presigned POST); trình duyệt gửi file thẳng lên S3 bằng địa chỉ đó.
+    - Mỗi thẻ (tag) bên dưới ứng với một hàm Lambda riêng trên AWS.
+
+    File này được kiểm bằng `backend/tests/test_openapi.py`: tập đường dẫn phải trùng
+    `ROUTES` trong `backend/api/handler.py`, và phản hồi thật của các hàm xử lý phải
+    khớp các schema khai ở đây.
+servers:
+  - url: https://{api_id}.execute-api.{region}.amazonaws.com
+    description: API Gateway (HTTP API) trên AWS
+    variables:
+      api_id:
+        default: your-api-id
+      region:
+        default: us-east-1
+  - url: http://localhost:8000
+    description: Máy chủ phát triển (python -m devserver), không kiểm mã đăng nhập
+security:
+  - bearerAuth: []
+tags:
+  - name: projects
+    description: Tạo, liệt kê, xem và xoá project. Lambda `api-projects`.
+  - name: documents
+    description: Đăng ký chứng từ để tải lên, liệt kê, xem kết quả OCR, xoá chứng từ. Lambda `api-documents`.
+  - name: process
+    description: Chạy và dừng lượt xử lý (OCR, trích xuất, kiểm tra). Lambda `api-process`, là hàm duy nhất khởi động Step Functions.
+  - name: review
+    description: Đối chiếu lại, sửa tay, tắt hoặc mở cảnh báo, duyệt hoặc từ chối. Lambda `api-review`.
+  - name: anchor
+    description: Đổi chứng từ gốc của project. Lambda `api-anchor`.
+
+paths:
+  /projects:
+    post:
+      tags: [projects]
+      operationId: createProject
+      summary: Tạo project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: Liệt kê project, mới nhất trước
+      responses:
+        '200':
+          description: Danh sách project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: Chi tiết project kèm tiến độ
+      description: Giao diện gọi đường dẫn này hai giây một lần trong lúc một lượt xử lý đang chạy.
+      responses:
+        '200':
+          description: Project, lượt xử lý gần nhất, tiến độ, các chứng từ và lượt đối chiếu mới nhất
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [projects]
+      operationId: deleteProject
+      summary: Xoá hẳn project cùng mọi chứng từ, lượt xử lý, lượt đối chiếu và file trên S3
+      description: Trả 409 khi project đang có lượt xử lý chạy. Nếu việc xoá hỏng giữa chừng, gọi lại để hoàn tất.
+      responses:
+        '200':
+          description: Số bản ghi và số file đã xoá
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteProjectResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}/documents:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [documents]
+      operationId: createDocuments
+      summary: Đăng ký chứng từ và lấy địa chỉ tải lên
+      description: |
+        Tạo một bản ghi chứng từ ở trạng thái `PENDING` cho mỗi file và trả về địa chỉ tải lên có chữ ký.
+        Trình duyệt gửi một biểu mẫu `multipart/form-data` tới `upload.url`: mọi trường trong
+        `upload.fields` đứng trước, trường `file` đứng sau cùng. Loại file nhận: pdf, png, jpg, jpeg, tiff.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDocumentsRequest'
+      responses:
+        '201':
+          description: Các chứng từ vừa đăng ký kèm địa chỉ tải lên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateDocumentsResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [documents]
+      operationId: listDocuments
+      summary: Liệt kê chứng từ của project
+      responses:
+        '200':
+          description: Danh sách chứng từ theo thứ tự tải lên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}/documents/{document_id}/ocr:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      operationId: getDocumentOcr
+      summary: Kết quả OCR của một chứng từ
+      description: Trả 404 khi chứng từ chưa chạy OCR.
+      responses:
+        '200':
+          description: Văn bản OCR, từng trang kèm khung bao của từng chữ, và ô nào lấy từ khung chữ nào
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OcrResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}/documents/{document_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/DocumentId'
+    delete:
+      tags: [documents]
+      operationId: deleteDocument
+      summary: Xoá một chứng từ rồi đối chiếu lại
+      description: Trả 409 khi project đang có lượt xử lý chạy.
+      responses:
+        '200':
+          description: Chứng từ đã xoá và lượt đối chiếu mới (null nếu đối chiếu lại không chạy được)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteDocumentResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    patch:
+      tags: [review]
+      operationId: editDocument
+      summary: Sửa tay dữ liệu trích xuất, tắt hoặc mở lại một cảnh báo, gắn lại khung chữ
+      description: |
+        Thân yêu cầu chọn MỘT trong bốn việc:
+
+        - `fields` (có thể kèm `sources`): sửa dữ liệu. Chứng từ được kiểm tra lại ngay; sai cấu trúc thì
+          chuyển sang `FAILED`. Không tự đối chiếu lại: lượt đối chiếu cũ thành `is_stale`.
+        - chỉ `sources`: gắn lại ô nào lấy từ khung chữ nào, không đổi dữ liệu.
+        - `dismiss`: tắt một cảnh báo. `undismiss`: mở lại một cảnh báo đã tắt.
+
+        Không được sửa trường `document_type`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditDocumentRequest'
+      responses:
+        '200':
+          description: Chứng từ sau khi sửa và kết quả kiểm tra mới
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EditDocumentResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}/reconcile:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [review]
+      operationId: reconcileProject
+      summary: Đối chiếu lại toàn bộ chứng từ đã xử lý của project
+      description: Chỉ chạy các luật xác định, không gọi AI. Mỗi lần gọi tạo một lượt đối chiếu mới ở trạng thái chờ duyệt.
+      responses:
+        '200':
+          description: Lượt đối chiếu vừa tạo (không kèm danh sách mâu thuẫn; lấy bằng GET /reconciliations/{reconciliation_id})
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reconciliation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /reconciliations/{reconciliation_id}:
+    parameters:
+      - $ref: '#/components/parameters/ReconciliationId'
+    get:
+      tags: [review]
+      operationId: getReconciliation
+      summary: Một lượt đối chiếu kèm toàn bộ mâu thuẫn
+      responses:
+        '200':
+          description: Lượt đối chiếu, có trường `discrepancies`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reconciliation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /reconciliations/{reconciliation_id}/review:
+    parameters:
+      - $ref: '#/components/parameters/ReconciliationId'
+    post:
+      tags: [review]
+      operationId: reviewReconciliation
+      summary: Duyệt hoặc từ chối một lượt đối chiếu
+      description: |
+        Trả 409 khi lượt đối chiếu không còn ở trạng thái chờ duyệt, không so chứng từ nào, đã cũ
+        (có chứng từ được sửa sau đó), hoặc khi duyệt mà còn cảnh báo `ai_format` / `vi_tri` chưa xử lý.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+      responses:
+        '200':
+          description: Lượt đối chiếu với trạng thái và quyết định mới
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reconciliation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}/anchor:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    put:
+      tags: [anchor]
+      operationId: setAnchor
+      summary: Đổi chứng từ gốc của project rồi đối chiếu lại
+      description: Chỉ đặt được chứng từ đã xử lý làm gốc. Trả 409 khi project đang có lượt xử lý chạy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnchorRequest'
+      responses:
+        '200':
+          description: Chứng từ gốc mới và lượt đối chiếu mới (null nếu đối chiếu lại không chạy được)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnchorResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}/process:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [process]
+      operationId: processProject
+      summary: Chạy xử lý các chứng từ chưa xử lý
+      description: |
+        Chứng từ đã xử lý được bỏ qua trừ khi gửi `force`. Chứng từ đã sửa tay vẫn được bỏ qua
+        trừ khi gửi thêm `force_edited`. Trả 202 khi một lượt xử lý được khởi động, 200 khi không
+        còn gì để xử lý (lúc đó chỉ đối chiếu lại), 409 khi project đang có lượt khác chạy.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProcessRequest'
+      responses:
+        '200':
+          description: Không còn chứng từ nào cần xử lý; đã đối chiếu lại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessNothingToDo'
+        '202':
+          description: Đã khởi động một lượt xử lý
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessStarted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /projects/{project_id}/process/stop:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [process]
+      operationId: stopProcessing
+      summary: Yêu cầu dừng lượt xử lý đang chạy
+      description: |
+        Ghi dấu yêu cầu dừng lên lượt xử lý; các bước chưa bắt đầu sẽ bỏ qua. Lời gọi AI đang
+        diễn ra không thu hồi được. Trả 202 khi lượt đang dừng dần, 200 khi lượt đã chết từ trước
+        và vừa được gỡ, 409 khi project không có lượt nào đang chạy.
+      responses:
+        '200':
+          description: Lượt xử lý đã chết từ trước và vừa được gỡ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopResult'
+        '202':
+          description: Đã ghi yêu cầu dừng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: ID token do Cognito cấp sau khi đăng nhập. API Gateway kiểm chữ ký trước khi gọi Lambda.
+
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      description: Mã project, dạng `prj-...`
+      schema:
+        type: string
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      description: Mã chứng từ, dạng `doc-...`
+      schema:
+        type: string
+    ReconciliationId:
+      name: reconciliation_id
+      in: path
+      required: true
+      description: Mã lượt đối chiếu, dạng `rec-...`
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Yêu cầu sai hoặc thiếu dữ liệu
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Thiếu mã đăng nhập hoặc mã không hợp lệ. Do API Gateway trả, yêu cầu chưa tới Lambda.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GatewayMessage'
+    NotFound:
+      description: Không tìm thấy project, chứng từ hoặc lượt đối chiếu
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Thao tác bị từ chối vì trạng thái hiện tại không cho phép
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: Lỗi hệ thống
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Thông báo lỗi bằng tiếng Việt
+
+    GatewayMessage:
+      type: object
+      properties:
+        message:
+          type: string
+
+    DocumentStatus:
+      type: string
+      enum: [PENDING, PROCESSING, OCR_DONE, EXTRACTED, VALIDATED, FAILED]
+
+    DocumentType:
+      type: string
+      description: Nhãn loại chứng từ do AI gán
+      enum: [document, purchase_order, invoice, acceptance_record, unknown, quotation, delivery_note, contract, other]
+
+    DocumentRole:
+      type: string
+      description: Vai trò của chứng từ trong giao dịch
+      enum: [order, offer, delivery, billing, other]
+
+    ColumnRole:
+      type: string
+      description: Vai trò của một cột trong bảng
+      enum: [item_name, quantity, unit, unit_price, amount]
+
+    Severity:
+      type: string
+      enum: [critical, high, medium, low]
+
+    OcrEngine:
+      type: string
+      description: Dịch vụ OCR chọn được cho một lượt xử lý
+      enum: [textract, dococr]
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    Project:
+      type: object
+      required: [project_id, name, created_at]
+      properties:
+        project_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+        created_by:
+          type: string
+        updated_at:
+          type: string
+        document_count:
+          type: integer
+        processing_run_id:
+          type: string
+          description: Có mặt khi một lượt xử lý đang chạy; đây là khoá của project
+        last_run_id:
+          type: string
+        latest_reconciliation_id:
+          type: string
+        anchor_document_ids:
+          type: array
+          items:
+            type: string
+        anchor_updated_at:
+          type: string
+        deleting_at:
+          type: string
+          description: Có mặt khi một lần xoá project đang dở
+        deleting_by:
+          type: string
+
+    ProjectList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+
+    Progress:
+      type: object
+      required: [total_documents, done_documents, failed_documents, total_steps, done_steps, progress_percent]
+      properties:
+        total_documents:
+          type: integer
+        done_documents:
+          type: integer
+        failed_documents:
+          type: integer
+        total_steps:
+          type: integer
+          description: Ba bước cho mỗi chứng từ
+        done_steps:
+          type: integer
+        progress_percent:
+          type: integer
+
+    Run:
+      allOf:
+        - $ref: '#/components/schemas/Progress'
+        - type: object
+          required: [run_id, status, is_active]
+          properties:
+            run_id:
+              type: string
+            project_id:
+              type: string
+            status:
+              type: string
+              enum: [PROCESSING, SUCCEEDED, FAILED, CANCELLED]
+            is_active:
+              type: boolean
+            document_ids:
+              type: array
+              items:
+                type: string
+            skipped_document_ids:
+              type: array
+              items:
+                type: string
+            ocr_engine:
+              type: string
+            execution_arn:
+              type: string
+            started_at:
+              type: string
+            finished_at:
+              type: string
+            cancel_requested_at:
+              type: string
+            cancel_requested_by:
+              type: string
+            error:
+              type: string
+              nullable: true
+
+    ProjectDetail:
+      type: object
+      required: [project, run, progress, documents, latest_reconciliation]
+      properties:
+        project:
+          $ref: '#/components/schemas/Project'
+        run:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Run'
+        progress:
+          $ref: '#/components/schemas/Progress'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        latest_reconciliation:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Reconciliation'
+
+    DeleteProjectResult:
+      type: object
+      required: [project_id, deleted]
+      properties:
+        project_id:
+          type: string
+        deleted:
+          type: object
+          required: [documents, reconciliations, runs, s3_objects]
+          properties:
+            documents:
+              type: integer
+            reconciliations:
+              type: integer
+            runs:
+              type: integer
+            s3_objects:
+              type: integer
+
+    CreateDocumentsRequest:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            required: [file_name]
+            properties:
+              file_name:
+                type: string
+                description: Đuôi file phải là pdf, png, jpg, jpeg hoặc tiff
+              content_type:
+                type: string
+                description: Bỏ trống thì suy từ đuôi file
+
+    UploadTarget:
+      type: object
+      required: [document_id, file_name, s3_key, content_type, upload, max_bytes]
+      properties:
+        document_id:
+          type: string
+        file_name:
+          type: string
+        s3_key:
+          type: string
+        content_type:
+          type: string
+        upload:
+          type: object
+          required: [url, fields]
+          properties:
+            url:
+              type: string
+            fields:
+              type: object
+              additionalProperties:
+                type: string
+        max_bytes:
+          type: integer
+          description: Kích thước tối đa của file, 20 MB
+
+    CreateDocumentsResult:
+      type: object
+      required: [project_id, documents]
+      properties:
+        project_id:
+          type: string
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadTarget'
+
+    Column:
+      type: object
+      required: [header]
+      properties:
+        header:
+          type: string
+        role:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ColumnRole'
+
+    Table:
+      type: object
+      required: [columns, rows]
+      properties:
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/Column'
+        rows:
+          type: array
+          description: Mỗi dòng là một object, khoá là tiêu đề cột, giá trị là chữ, số hoặc null
+          items:
+            type: object
+            additionalProperties: true
+
+    Extraction:
+      type: object
+      description: Dữ liệu trích xuất theo cấu trúc chung cho mọi loại chứng từ. Trường nào không có trên chứng từ thì vắng mặt hoặc null.
+      additionalProperties: true
+      properties:
+        document_type:
+          type: string
+          nullable: true
+        role:
+          type: string
+          nullable: true
+        doc_number:
+          type: string
+          nullable: true
+        doc_date:
+          type: string
+          nullable: true
+          description: Dạng YYYY-MM-DD
+        order_reference:
+          type: string
+          nullable: true
+          description: Số đơn hàng mà chứng từ tham chiếu tới
+        seller:
+          type: string
+          nullable: true
+        seller_tax_code:
+          type: string
+          nullable: true
+        buyer:
+          type: string
+          nullable: true
+        buyer_tax_code:
+          type: string
+          nullable: true
+        currency:
+          type: string
+          nullable: true
+        subtotal:
+          type: number
+          nullable: true
+        discount_amount:
+          type: number
+          nullable: true
+        tax_amount:
+          type: number
+          nullable: true
+        total_amount:
+          type: number
+          nullable: true
+        other_fields:
+          type: object
+          nullable: true
+          additionalProperties: true
+        tables:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/Table'
+
+    Flag:
+      type: object
+      required: [code, field]
+      properties:
+        code:
+          type: string
+          description: Ví dụ `currency`, `format`, `quantity`, `insufficient_data`, `ai_format`, `vi_tri`. Chỉ `ai_format` và `vi_tri` khoá việc duyệt.
+        field:
+          type: string
+        message:
+          type: string
+        values:
+          type: object
+          additionalProperties: true
+        formula:
+          type: string
+          nullable: true
+
+    Validation:
+      type: object
+      required: [valid]
+      properties:
+        valid:
+          type: boolean
+          description: Cấu trúc xử lý được. Không có nghĩa là nghiệp vụ đã đúng.
+        schema_errors:
+          type: array
+          items:
+            type: string
+        rule_errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        flags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Flag'
+        comparison_incomplete:
+          type: boolean
+
+    DismissedFlag:
+      type: object
+      required: [code, field]
+      properties:
+        code:
+          type: string
+        field:
+          type: string
+        values:
+          type: object
+          additionalProperties: true
+        by:
+          type: string
+          nullable: true
+        at:
+          type: string
+          nullable: true
+
+    Document:
+      type: object
+      required: [document_id, project_id, file_name, status, needs_confirmation]
+      properties:
+        document_id:
+          type: string
+        project_id:
+          type: string
+        file_name:
+          type: string
+        file_type:
+          type: string
+        size_bytes:
+          type: integer
+          nullable: true
+        uploaded_at:
+          type: string
+        updated_at:
+          type: string
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+        step:
+          type: string
+          nullable: true
+          enum: [ocr, extract, validate, null]
+          description: Bước đang chạy hoặc vừa chạy
+        step_status:
+          type: string
+          nullable: true
+          enum: [running, done, failed, null]
+        step_started_at:
+          type: string
+          nullable: true
+        attempt:
+          type: integer
+          nullable: true
+        document_type:
+          type: string
+          nullable: true
+          description: Một trong các giá trị của `DocumentType`
+        po_number:
+          type: string
+          nullable: true
+        doc_number:
+          type: string
+          nullable: true
+        order_reference:
+          type: string
+          nullable: true
+        role:
+          type: string
+          nullable: true
+          description: Một trong các giá trị của `DocumentRole`
+        ocr_engine:
+          type: string
+          nullable: true
+        extraction:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Extraction'
+        confidence:
+          type: object
+          nullable: true
+          description: Độ tin cậy do mô hình ngôn ngữ tự cho, theo từng trường
+          additionalProperties: true
+        validation:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Validation'
+        ungrounded_fields:
+          type: array
+          nullable: true
+          description: Trường có giá trị không tìm thấy trong văn bản OCR
+          items:
+            type: string
+        edited_fields:
+          type: array
+          nullable: true
+          description: Trường người dùng đã sửa tay
+          items:
+            type: string
+        edited_at:
+          type: string
+          nullable: true
+        dismissed_flags:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/DismissedFlag'
+        error:
+          type: string
+          nullable: true
+        needs_confirmation:
+          type: boolean
+          description: Còn cảnh báo `ai_format` hoặc `vi_tri` chưa xử lý
+        view_url:
+          type: string
+          description: Địa chỉ có chữ ký để xem file gốc, được ký lại ở mỗi lần gọi
+
+    DocumentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+
+    OcrPage:
+      type: object
+      required: [page_number]
+      additionalProperties: true
+      properties:
+        page_number:
+          type: integer
+        mean_token_confidence:
+          type: number
+          nullable: true
+        token_count:
+          type: integer
+        words:
+          type: array
+          description: Mỗi phần tử là `[chữ, x0, y0, x1, y1]`, toạ độ chuẩn hoá từ 0 đến 1
+          items:
+            type: array
+            items: {}
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+              confidence:
+                type: number
+                nullable: true
+
+    OcrResult:
+      type: object
+      required: [document_id, file_name, text, pages]
+      properties:
+        document_id:
+          type: string
+        file_name:
+          type: string
+        text:
+          type: string
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/OcrPage'
+        layout:
+          type: object
+          nullable: true
+          description: Ô nào, trường nào lấy từ khung chữ nào, dưới dạng `[trang, thứ tự chữ]`
+          additionalProperties: true
+
+    DeleteDocumentResult:
+      type: object
+      required: [project_id, document_id, reconciliation]
+      properties:
+        project_id:
+          type: string
+        document_id:
+          type: string
+        reconciliation:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Reconciliation'
+
+    FlagRef:
+      type: object
+      required: [code, field]
+      properties:
+        code:
+          type: string
+        field:
+          type: string
+
+    EditDocumentRequest:
+      type: object
+      properties:
+        fields:
+          type: object
+          description: 'Các trường của dữ liệu trích xuất cần ghi đè, ví dụ `{"seller": "ABC"}` hoặc cả `tables`'
+          additionalProperties: true
+        sources:
+          type: object
+          description: Ô nào lấy từ khung chữ nào
+          additionalProperties: true
+        dismiss:
+          $ref: '#/components/schemas/FlagRef'
+        undismiss:
+          $ref: '#/components/schemas/FlagRef'
+
+    EditDocumentResult:
+      type: object
+      required: [document, validation]
+      properties:
+        document:
+          $ref: '#/components/schemas/Document'
+        validation:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Validation'
+
+    DiscrepancyValue:
+      type: object
+      required: [document_id, document_type]
+      properties:
+        document_id:
+          type: string
+        document_type:
+          type: string
+        value:
+          nullable: true
+          description: Giá trị của trường trên chứng từ đó; kiểu tuỳ trường
+
+    Discrepancy:
+      type: object
+      required: [rule_id, field, severity, values, explanation]
+      properties:
+        rule_id:
+          type: string
+        field:
+          type: string
+        severity:
+          $ref: '#/components/schemas/Severity'
+        values:
+          type: array
+          description: Giá trị trên từng chứng từ liên quan; số chứng từ bất kỳ
+          items:
+            $ref: '#/components/schemas/DiscrepancyValue'
+        difference:
+          type: number
+          nullable: true
+        explanation:
+          type: string
+        anchor_document_id:
+          type: string
+          nullable: true
+        source:
+          type: string
+          enum: [rule, ai]
+        confidence:
+          type: number
+          nullable: true
+
+    Reconciliation:
+      type: object
+      required: [reconciliation_id, project_id, created_at, status, document_ids, discrepancy_count, severity_summary]
+      properties:
+        reconciliation_id:
+          type: string
+        project_id:
+          type: string
+        created_at:
+          type: string
+        status:
+          type: string
+          enum: [PENDING_REVIEW, APPROVED, REJECTED]
+        document_ids:
+          type: array
+          description: Các chứng từ đã được đem so
+          items:
+            type: string
+        discrepancy_count:
+          type: integer
+        severity_summary:
+          type: object
+          description: Số mâu thuẫn theo mức, khoá là một giá trị của `Severity`
+          additionalProperties:
+            type: integer
+        groups:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              key:
+                type: string
+                nullable: true
+                description: Số đơn hàng của nhóm
+              document_ids:
+                type: array
+                items:
+                  type: string
+              document_types:
+                type: array
+                items:
+                  type: string
+              anchor_document_id:
+                type: string
+                nullable: true
+        skipped_documents:
+          type: array
+          description: Chứng từ không được đem so, kèm lý do
+          items:
+            type: object
+            additionalProperties: true
+        s3_key:
+          type: string
+        review:
+          type: object
+          properties:
+            decision:
+              type: string
+              nullable: true
+            reviewer:
+              type: string
+              nullable: true
+            reviewed_at:
+              type: string
+              nullable: true
+            comment:
+              type: string
+              nullable: true
+        is_stale:
+          type: boolean
+          description: Có chứng từ được sửa, xoá hoặc đổi gốc sau lượt đối chiếu này; phải đối chiếu lại mới duyệt được
+        unconfirmed_document_ids:
+          type: array
+          items:
+            type: string
+        discrepancies:
+          type: array
+          description: Chỉ có ở GET /reconciliations/{reconciliation_id}
+          items:
+            $ref: '#/components/schemas/Discrepancy'
+
+    ReviewRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [APPROVED, REJECTED]
+        comment:
+          type: string
+          nullable: true
+
+    AnchorRequest:
+      type: object
+      required: [document_id]
+      properties:
+        document_id:
+          type: string
+
+    AnchorResult:
+      type: object
+      required: [project_id, anchor_document_ids, reconciliation]
+      properties:
+        project_id:
+          type: string
+        anchor_document_ids:
+          type: array
+          items:
+            type: string
+        reconciliation:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Reconciliation'
+
+    ProcessRequest:
+      type: object
+      properties:
+        document_ids:
+          type: array
+          minItems: 1
+          description: Bỏ hẳn trường này để xử lý cả project. Danh sách rỗng bị từ chối.
+          items:
+            type: string
+        force:
+          type: boolean
+          description: Xử lý lại cả chứng từ đã xử lý
+        force_edited:
+          type: boolean
+          description: Xử lý lại cả chứng từ đã sửa tay; dữ liệu đã sửa sẽ bị ghi đè
+        engine:
+          $ref: '#/components/schemas/OcrEngine'
+
+    SkippedDocument:
+      type: object
+      required: [document_id, reason]
+      properties:
+        document_id:
+          type: string
+        file_name:
+          type: string
+          nullable: true
+        reason:
+          type: string
+
+    ProcessStarted:
+      type: object
+      required: [project_id, run_id, processing, skipped]
+      properties:
+        project_id:
+          type: string
+        run_id:
+          type: string
+        execution_arn:
+          type: string
+        processing:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        skipped:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkippedDocument'
+
+    ProcessNothingToDo:
+      type: object
+      required: [project_id, run_id, processing, skipped, message, reconciliation]
+      properties:
+        project_id:
+          type: string
+        run_id:
+          type: string
+          nullable: true
+          description: Luôn là null ở phản hồi này
+        processing:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        skipped:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkippedDocument'
+        message:
+          type: string
+        reconciliation:
+          type: object
+          required: [reconciliation_id, discrepancy_count, severity_summary]
+          properties:
+            reconciliation_id:
+              type: string
+            discrepancy_count:
+              type: integer
+            severity_summary:
+              type: object
+              additionalProperties:
+                type: integer
+
+    StopResult:
+      type: object
+      required: [project_id, run_id, status]
+      properties:
+        project_id:
+          type: string
+        run_id:
+          type: string
+        cancel_requested_at:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [STOPPING, CANCELLED]

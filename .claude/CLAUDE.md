@@ -35,7 +35,8 @@ tính chất này là sai.
 [8] PUT /projects/{id}/anchor        -> đổi chứng từ gốc của project rồi đối chiếu lại
 ```
 
-Full API surface: `docs/iac-plan.md` §3. Kịch bản chạy thật: `infra/README.md` §7.
+Full API surface: `docs/iac-plan.md` §3; thân yêu cầu và phản hồi của từng route: `docs/openapi.yaml`.
+Kịch bản chạy thật: `infra/README.md` §7.
 
 ## 3. Repo layout
 
@@ -55,6 +56,7 @@ backend/
 frontend/    React 19 + TS + Vite + Tailwind v4; 2 màn hình, gọi API dev server
               src/review/draft.ts = logic thuần của tab "Trích xuất & sửa"; hooks/useReview.ts
 docs/        architecture.md, data-model.md, schemas.md, iac-plan.md, observability.md
+               openapi.yaml (tài liệu API theo OpenAPI 3.0, khoá với code bằng tests/test_openapi.py)
 evaluation/  spike đo chất lượng AI + FINDINGS.md
 infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Step Functions
              statemachine-test/ verify ASL bằng Step Functions Local
@@ -436,6 +438,11 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   + Enter là ra trống), gom khung chưa màu hiện dải mỏng trên thanh Lưu. Nháp chỉ chốt vào draft, nút Lưu cuối mới gọi
   API. Draft khác gốc thì ghi cache, bằng nhau hoặc hết hạn thì xoá.
 
+- **`docs/openapi.yaml` viết tay, khoá với code bằng `tests/test_openapi.py`.** Thêm route, thêm
+  trường vào một phản hồi, hay đổi một danh sách giá trị (engine, loại chứng từ, trạng thái) thì
+  phải khai vào file đó, nếu không test đỏ. Mô tả trong YAML có `: ` phải bọc nháy đơn. Mã 401
+  do API Gateway trả nên test offline không tái hiện được.
+
 ## 6. Thêm loại chứng từ mới
 
 Mọi loại dùng chung schema `Document` (`schemas/document.py`). Thêm loại = thêm
@@ -478,7 +485,7 @@ cd backend;  .venv\Scripts\python.exe -m devserver --upload ..\evaluation\datase
 cd frontend; npm run dev                                      # UI  :5173
 
 # Test backend — PHẢI chạy từ trong backend/ (import cần CWD ở đó)
-cd backend; .venv\Scripts\python.exe -m pytest -q          # 447 test, offline
+cd backend; .venv\Scripts\python.exe -m pytest -q          # 459 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy

@@ -205,7 +205,7 @@ def test_doc_khong_co_po_number_bi_bao_khi_co_nhieu_giao_dich():
 
 
 @pytest.fixture
-def delivery_note_type():
+def delivery_note_type(monkeypatch):
     class DeliveryNote(BaseModel):
         document_type: Literal["delivery_note"]
         note_number: str = Field(min_length=1)
@@ -213,11 +213,11 @@ def delivery_note_type():
         po_number: str | None = None
         currency: str | None = None
 
-    registry.DOCUMENT_TYPES["delivery_note"] = DeliveryNote
-    registry.DOCUMENT_TYPE_LABELS["delivery_note"] = "phiếu giao hàng"
-    yield
-    del registry.DOCUMENT_TYPES["delivery_note"]
-    del registry.DOCUMENT_TYPE_LABELS["delivery_note"]
+    # setitem tự trả lại giá trị cũ khi test xong. Trước đây fixture này `del` hẳn
+    # khoá "delivery_note" — vốn có sẵn trong registry — nên mọi test chạy sau nó
+    # thấy registry thiếu một loại chứng từ.
+    monkeypatch.setitem(registry.DOCUMENT_TYPES, "delivery_note", DeliveryNote)
+    monkeypatch.setitem(registry.DOCUMENT_TYPE_LABELS, "delivery_note", "phiếu giao hàng")
 
 
 def test_them_loai_chung_tu_thu_tu_khong_lam_vo_engine(delivery_note_type):

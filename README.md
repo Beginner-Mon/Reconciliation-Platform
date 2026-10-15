@@ -149,6 +149,7 @@ Lambda, `apply`, deploy frontend, kiểm tra sau apply, xoá hạ tầng — n�
 | [docs/data-model.md](docs/data-model.md) | 4 bảng DynamoDB, GSI, layout S3 |
 | [docs/schemas.md](docs/schemas.md) | Schema chung, danh sách cờ và rule đối chiếu |
 | [docs/iac-plan.md](docs/iac-plan.md) | Toàn bộ tài nguyên AWS và API surface |
+| [docs/openapi.yaml](docs/openapi.yaml) | Tài liệu API theo chuẩn OpenAPI 3.0: 15 đường dẫn, thân yêu cầu, phản hồi và mã lỗi |
 | [docs/observability.md](docs/observability.md) | Audit + monitoring 3 lớp, dashboard, cách mentor xem (đề xuất) |
 | [backend/devserver/README.md](backend/devserver/README.md) | Dev server, chi phí từng processor, dev/cloud tách nhau thế nào |
 | [frontend/README.md](frontend/README.md) | 2 màn hình, presigned POST, polling tiến độ |
@@ -161,4 +162,4 @@ Lambda, `apply`, deploy frontend, kiểm tra sau apply, xoá hạ tầng — n�
 
 ## 8. Chưa làm
 
-WebSocket cho progress (hiện dùng polling, nâng cấp sau bằng DynamoDB Streams mà không phải sửa worker) · dataset 50–100 tài liệu kèm ground truth · tài liệu API dạng OpenAPI · test frontend · dark mode · phân trang.
+WebSocket cho progress (hiện dùng polling, nâng cấp sau bằng DynamoDB Streams mà không phải sửa worker) · dataset 50–100 tài liệu kèm ground truth · test frontend · dark mode · phân trang.
