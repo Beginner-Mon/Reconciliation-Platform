@@ -264,6 +264,13 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   nào hiện ra cho tới khi bật `PYTHONUNBUFFERED`. Lambda timeout giữa chừng thì
   phần còn trong bộ đệm mất luôn.
 - **Amplify deploy thủ công bằng zip**, không nối GitHub (token sẽ nằm trong tfstate local chưa mã hoá). Branch cố định `main`, URL `https://<branch>.<app_id>.amplifyapp.com` cho vào `local.cors_origins`.
+- **Tài khoản xem dashboard là IAM user đăng nhập Console bằng mật khẩu, KHÔNG có
+  access key.** Quyền ở `aws_iam_group.dashboard_viewer`; user và mật khẩu tạm tạo
+  bằng `infra/scripts/create_viewer.ps1` để mật khẩu không vào tfstate. `logs:StartQuery`
+  chỉ trên 11 log group của hệ thống; các action đọc số đo AWS chỉ nhận `*` nên người
+  xem thấy số đo của cả tài khoản (không thấy log). `tests/test_dashboard_viewer.py`
+  khoá đúng 7 action. Nhóm còn thành viên thì `terraform destroy` không xoá được, gỡ
+  user trước (`infra/README.md` §10).
 - **`deploy_frontend.ps1` từ chối chạy khi `VITE_API_URL` trống hoặc là
   localhost**, và sau khi build thì kiểm chính bundle có chứa URL đó.
   `frontend/.env` bình thường là cấu hình dev; build nguyên trạng thì bản trên
@@ -505,7 +512,7 @@ cd backend;  .venv\Scripts\python.exe -m devserver --upload ..\evaluation\datase
 cd frontend; npm run dev                                      # UI  :5173
 
 # Test backend — PHẢI chạy từ trong backend/ (import cần CWD ở đó)
-cd backend; .venv\Scripts\python.exe -m pytest -q          # 545 test, offline
+cd backend; .venv\Scripts\python.exe -m pytest -q          # 552 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy

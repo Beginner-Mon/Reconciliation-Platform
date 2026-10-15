@@ -47,3 +47,8 @@ output "dashboard_url" {
   description = "Link CloudWatch dashboard cho demo"
   value       = module.aws.dashboard_url
 }
+
+output "dashboard_viewer_group" {
+  description = "Nhóm IAM chỉ được xem dashboard (scripts/create_viewer.ps1 cho user vào đây)"
+  value       = module.aws.dashboard_viewer_group
+}

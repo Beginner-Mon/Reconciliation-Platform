@@ -198,7 +198,47 @@ Script không cầm mật khẩu — Cognito tự sinh mật khẩu tạm và g�
 # Lần đầu đăng nhập sẽ bị bắt đổi mật khẩu (NEW_PASSWORD_REQUIRED) — LoginGate đã xử lý.
 ```
 
+## 10. Tài khoản chỉ xem dashboard (IAM)
+
+Dành cho người hướng dẫn, giảng viên: đăng nhập AWS Console bằng mật khẩu và chỉ mở
+được dashboard `recon-prod`. **Không có access key**, người xem không cần `aws configure`.
+
+Quyền nằm ở nhóm IAM `recon-dashboard-viewer-prod` do Terraform khai
+(`aws_iam_group.dashboard_viewer`). User và mật khẩu tạo bằng script để mật khẩu
+không vào tfstate:
+
+```powershell
+.\scripts\create_viewer.ps1                          # tên mặc định: dashboard-viewer
+.\scripts\create_viewer.ps1 -Username ten-nguoi-xem
+```
+
+Script in ra link dashboard, Account ID, tên đăng nhập và mật khẩu tạm (chỉ hiện một
+lần). Người xem mở link dashboard → trang đăng nhập hỏi Account ID, tên, mật khẩu →
+AWS bắt đổi mật khẩu ở lần đầu → vào thẳng dashboard.
+
+| Được | Không được |
+|---|---|
+| Xem dashboard `recon-prod` | Sửa, xoá dashboard |
+| Chạy Logs Insights trên 11 log group của hệ thống (ba ô log của dashboard) | Đọc log của dự án khác; xem từng dòng log, liệt kê log group |
+| Đọc số đo (metric) | S3, DynamoDB, Lambda, Step Functions, IAM |
+| Đổi mật khẩu của chính mình | Tạo access key |
+
+`cloudwatch:GetMetricData`, `ListMetrics`, `ListDashboards` và `logs:GetQueryResults`,
+`StopQuery` không giới hạn được theo tài nguyên (AWS chỉ nhận `*`): người xem thấy được
+**số đo** của cả tài khoản AWS nếu tự tìm, nhưng không thấy nội dung log.
+
+Gỡ người xem:
+
+```powershell
+aws iam delete-login-profile --user-name dashboard-viewer
+aws iam remove-user-from-group --user-name dashboard-viewer --group-name recon-dashboard-viewer-prod
+aws iam delete-user --user-name dashboard-viewer
+```
+
 ## Xóa hạ tầng (cẩn thận)
+
+Có tài khoản xem dashboard (§10) thì gỡ trước: nhóm IAM còn thành viên thì Terraform
+không xoá được.
 
 ```powershell
 terraform destroy "-var-file=dev.tfvars"

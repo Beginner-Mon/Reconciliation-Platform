@@ -17,6 +17,7 @@ infra/
 ├── scripts/build_backend.ps1    đóng gói 11 zip, mỗi Lambda một gói
 ├── scripts/deploy_frontend.ps1  build frontend rồi đẩy zip lên Amplify
 ├── scripts/create_user.ps1      tạo tài khoản Cognito
+├── scripts/create_viewer.ps1    tạo tài khoản IAM chỉ xem dashboard
 ├── bootstrap/                   stack riêng tạo bucket chứa state
 └── modules/
     ├── aws/
@@ -102,6 +103,11 @@ Mỗi Lambda `api` một role riêng, quyền cắt theo đúng việc nó làm
   GetItem/PutItem/UpdateItem/Query trên `.../index/*`, Secrets Manager read,
   logs. **Không** có `states:*` lẫn `Scan` — worker không dùng.
 - SFN role: `lambda:InvokeFunction` lên đúng 6 worker.
+- Nhóm `dashboard-viewer` (người xem dashboard, không phải role của Lambda):
+  `cloudwatch:GetDashboard` trên đúng dashboard, `logs:StartQuery` trên đúng 11 log
+  group; `GetMetricData`, `ListMetrics`, `ListDashboards`, `GetQueryResults`,
+  `StopQuery` chỉ nhận `*`. User tạo bằng `scripts/create_viewer.ps1`, đăng nhập
+  Console bằng mật khẩu, không có access key.
 
 ### API Gateway
 HTTP API (rẻ, đơn giản) — **có auth** (Cognito JWT authorizer, `authorization_type=JWT` trên cả 15 route; `allow_headers` gồm `authorization`). CORS mở cho

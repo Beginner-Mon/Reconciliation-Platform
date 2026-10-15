@@ -650,6 +650,70 @@ resource "aws_cloudwatch_dashboard" "poc" {
   })
 }
 
+# Tài khoản CHỈ để xem dashboard (người hướng dẫn, giảng viên): đăng nhập Console
+# bằng mật khẩu, KHÔNG có access key. Terraform chỉ giữ quyền; user và mật khẩu tạo
+# bằng scripts/create_viewer.ps1 để mật khẩu không vào tfstate.
+resource "aws_iam_group" "dashboard_viewer" {
+  name = "${var.app_name}-dashboard-viewer-${var.env}"
+}
+
+resource "aws_iam_policy" "dashboard_viewer" {
+  name = "${var.app_name}-dashboard-viewer-${var.env}"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "XemDashboard"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetDashboard"]
+        Resource = [aws_cloudwatch_dashboard.poc.dashboard_arn]
+      },
+      # Ba action này AWS không cho giới hạn theo tài nguyên. Người xem vì vậy thấy
+      # được SỐ ĐO của cả tài khoản, nhưng không đọc được nội dung log.
+      {
+        Sid    = "DocSoDo"
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:ListDashboards",
+          "cloudwatch:GetMetricData",
+          "cloudwatch:ListMetrics",
+        ]
+        Resource = ["*"]
+      },
+      # Ba ô log của dashboard chạy Logs Insights trên đúng 11 log group của hệ thống.
+      # Ghi cả ARN trơn lẫn dạng có hậu tố log stream vì log group có hai dạng ARN.
+      {
+        Sid    = "TruyVanLogCuaHeThong"
+        Effect = "Allow"
+        Action = ["logs:StartQuery"]
+        Resource = flatten([
+          for g in aws_cloudwatch_log_group.lambda : [g.arn, "${g.arn}:*"]
+        ])
+      },
+      # Lấy và dừng truy vấn theo queryId; AWS không cho giới hạn theo tài nguyên.
+      {
+        Sid      = "LayKetQuaTruyVan"
+        Effect   = "Allow"
+        Action   = ["logs:GetQueryResults", "logs:StopQuery"]
+        Resource = ["*"]
+      },
+    ]
+  })
+}
+
+resource "aws_iam_group_policy_attachment" "dashboard_viewer" {
+  group      = aws_iam_group.dashboard_viewer.name
+  policy_arn = aws_iam_policy.dashboard_viewer.arn
+}
+
+# Đổi mật khẩu tạm ở lần đăng nhập đầu. Policy có sẵn của AWS, chỉ cho đổi mật khẩu
+# của CHÍNH user đó.
+resource "aws_iam_group_policy_attachment" "dashboard_viewer_doi_mat_khau" {
+  group      = aws_iam_group.dashboard_viewer.name
+  policy_arn = "arn:aws:iam::aws:policy/IAMUserChangePassword"
+}
+
 resource "aws_lambda_function" "api" {
   for_each = local.api_functions
 
