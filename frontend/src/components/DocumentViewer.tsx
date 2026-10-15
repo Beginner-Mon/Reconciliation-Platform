@@ -69,15 +69,15 @@ export function DocumentViewer({
         {onCollapse && (
           <button
             onClick={onCollapse}
-            title="Ẩn chứng từ gốc"
-            aria-label="Ẩn chứng từ gốc"
+            title="Ẩn file gốc"
+            aria-label="Ẩn file gốc"
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-800"
           >
             <PanelLeftClose size={16} />
           </button>
         )}
         <span className="min-w-0 flex-1 truncate font-medium text-slate-700">
-          {document ? document.file_name : "Chứng từ gốc"}
+          {document ? document.file_name : "File gốc"}
         </span>
         {review && coKhung && (
           <label className="flex shrink-0 items-center gap-1 text-slate-600">

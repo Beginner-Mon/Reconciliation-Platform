@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Anchor,
   ArrowLeft,
   Check,
   ChevronDown,
@@ -11,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { AnchorInfo } from "../anchor";
 import { DEFAULT_OCR_ENGINE, OCR_ENGINES } from "../format";
 import type { DocumentStatus, DocumentView } from "../types";
 
@@ -72,6 +74,8 @@ interface Props {
   onStop: () => void;
   onReconcile: () => void;
   onDelete: (document: DocumentView) => void;
+  anchors: Map<string, AnchorInfo>;
+  onSetAnchor: (document: DocumentView) => void;
 }
 
 export function DocumentSidebar({
@@ -92,6 +96,8 @@ export function DocumentSidebar({
   onStop,
   onReconcile,
   onDelete,
+  anchors,
+  onSetAnchor,
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [engine, setEngine] = useState<string>(DEFAULT_OCR_ENGINE);
@@ -166,6 +172,7 @@ export function DocumentSidebar({
         ) : (
           documents.map((document) => {
             const dangXem = document.document_id === selectedId;
+            const goc = anchors.get(document.document_id);
             return (
               <div
                 key={document.document_id}
@@ -203,6 +210,18 @@ export function DocumentSidebar({
                           CẦN XEM
                         </span>
                       )}
+                      {goc?.isAnchor && (
+                        <span
+                          title={
+                            goc.chosenByUser
+                              ? "Chứng từ gốc do người dùng chọn: chứng từ còn lại trong nhóm được so với chứng từ này"
+                              : "Chứng từ gốc do hệ thống tự chọn theo vai trò: chứng từ còn lại trong nhóm được so với chứng từ này"
+                          }
+                          className="shrink-0 rounded border border-indigo-300 bg-indigo-50 px-1.5 py-px text-[10px] font-semibold tracking-wide text-indigo-700"
+                        >
+                          GỐC
+                        </span>
+                      )}
                       {document.ocr_engine && (
                         <span className="truncate text-xs text-slate-400">
                           {document.ocr_engine}
@@ -211,6 +230,29 @@ export function DocumentSidebar({
                     </span>
                   </span>
                 </button>
+                {goc && (
+                  <button
+                    onClick={() => onSetAnchor(document)}
+                    disabled={busy || running || goc.isAnchor}
+                    title={
+                      goc.isAnchor
+                        ? "Đang là chứng từ gốc của nhóm"
+                        : "Đặt làm chứng từ gốc: đối chiếu lại ngay, không gọi AI"
+                    }
+                    aria-label={
+                      goc.isAnchor
+                        ? `${document.file_name} đang là chứng từ gốc`
+                        : `Đặt ${document.file_name} làm chứng từ gốc`
+                    }
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                      goc.isAnchor
+                        ? "text-indigo-600"
+                        : "text-slate-400 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-40"
+                    }`}
+                  >
+                    <Anchor size={14} />
+                  </button>
+                )}
                 <button
                   onClick={() => onDelete(document)}
                   disabled={busy || running}

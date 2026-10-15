@@ -422,6 +422,12 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   khung là dữ liệu bị đổi mà không biết.
 - Frontend vẫn chưa có test. Logic thuần của tab "Trích xuất & sửa" nằm riêng ở
   `frontend/src/review/draft.ts` (không import React) để sau này thêm test dễ.
+- **Nhãn GỐC và nút đổi gốc chỉ hiện cho nhóm có ĐÚNG 2 chứng từ**
+  (`frontend/src/anchor.ts`). Server ghi `groups[].anchor_document_id` cho MỌI
+  nhóm, nhưng `core/crosscheck.py` chỉ so cặp với gốc khi nhóm có 2 chứng từ; gắn
+  nhãn cho nhóm khác là nói với người dùng một điều đối chiếu không làm. Khung xem
+  file bên trái tên là "file gốc", không phải "chứng từ gốc", để cụm "chứng từ gốc"
+  chỉ có một nghĩa.
 - **Mọi cờ đều tắt lẻ được, kể cả cờ khoá** (`dismissed_flags` top-level,
   KHÔNG nằm trong `validation` vì worker validate ghi đè cả dict đó). Tắt/mở qua
   `PATCH {dismiss/undismiss: {code, field}}`, không thêm route nên vẫn 15 route.

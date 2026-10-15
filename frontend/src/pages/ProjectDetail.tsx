@@ -1,6 +1,7 @@
-import { AlertTriangle, Check, X } from "lucide-react";
+import { AlertTriangle, Anchor, Check, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import { anchorsByDocument } from "../anchor";
 import { api, ApiError, uploadFile } from "../api";
 import { DiscrepancyCard } from "../components/DiscrepancyCard";
 import { DocumentSidebar } from "../components/DocumentSidebar";
@@ -241,6 +242,29 @@ export function ProjectDetail() {
     );
   }
 
+  async function changeAnchor(document: { document_id: string; file_name: string }) {
+    if (!projectId) return;
+    if (
+      !window.confirm(
+        `Đặt ${document.file_name} làm chứng từ gốc?\n\n` +
+          `Chứng từ còn lại trong nhóm sẽ được so với chứng từ này. Hệ thống đối chiếu lại ngay, không gọi AI.`,
+      )
+    ) {
+      return;
+    }
+    await run(
+      async () => {
+        const result = await api.setAnchor(projectId, document.document_id);
+        await refresh();
+        return result;
+      },
+      (result) =>
+        result.reconciliation
+          ? `Đã đặt ${document.file_name} làm chứng từ gốc và đối chiếu lại: ${result.reconciliation.discrepancy_count} mâu thuẫn.`
+          : `Đã đặt ${document.file_name} làm chứng từ gốc. Đối chiếu lại chưa chạy được — bấm Đối chiếu lại.`,
+    );
+  }
+
   if (loading) return <p className="p-8 text-center text-slate-500">Đang tải…</p>;
   if (error && !data) {
     return (
@@ -261,6 +285,8 @@ export function ProjectDetail() {
   );
   const decided = reconciliation && reconciliation.status !== "PENDING_REVIEW";
   const coTheDoiChieu = data.documents.some((d) => d.status === "VALIDATED");
+  const goc = anchorsByDocument(reconciliation, data.project);
+  const chungTuGoc = data.documents.filter((d) => goc.get(d.document_id)?.isAnchor);
 
   const TABS: { key: TabKey; label: string; badge?: number }[] = [
     { key: "extract", label: "Trích xuất & sửa" },
@@ -305,6 +331,8 @@ export function ProjectDetail() {
           onStop={stop}
           onReconcile={reconcile}
           onDelete={removeDocument}
+          anchors={goc}
+          onSetAnchor={changeAnchor}
         />
 
         {/* Khung phải — mọi thứ về xử lý và xem kết quả đều ở đây */}
@@ -380,6 +408,32 @@ export function ProjectDetail() {
                         <h3 className="mb-4 font-semibold text-slate-700">
                           {reconciliation.discrepancy_count} mâu thuẫn
                         </h3>
+
+                        {chungTuGoc.length > 0 && (
+                          <div className="mb-4 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-slate-700">
+                            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                              <Anchor size={14} className="shrink-0 text-indigo-600" />
+                              <span>Chứng từ gốc:</span>
+                              {chungTuGoc.map((d) => (
+                                <span key={d.document_id}>
+                                  <button
+                                    onClick={() => setSelectedId(d.document_id)}
+                                    className="font-medium text-sky-700 hover:underline"
+                                  >
+                                    {d.file_name}
+                                  </button>{" "}
+                                  <span className="text-slate-500">
+                                    ({goc.get(d.document_id)?.chosenByUser ? "người dùng chọn" : "hệ thống tự chọn theo vai trò"})
+                                  </span>
+                                </span>
+                              ))}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Giá trị ghi «Gốc» trong các mâu thuẫn lấy từ chứng từ này. Đổi gốc bằng nút{" "}
+                              <Anchor size={11} className="inline" /> ở danh sách bên trái.
+                            </p>
+                          </div>
+                        )}
 
                         {/* Sửa tay KHÔNG còn tự đối chiếu — nếu im lặng thì
                             người review duyệt nhầm số cũ. Server cũng chặn

@@ -141,8 +141,8 @@ export function SplitPane({ left, right }: Props) {
         <div className="w-9 shrink-0 border-r border-slate-200 bg-white">
           <button
             onClick={moLai}
-            title="Hiện chứng từ gốc"
-            aria-label="Hiện chứng từ gốc"
+            title="Hiện file gốc"
+            aria-label="Hiện file gốc"
             className="mx-auto mt-2 flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-800"
           >
             <PanelLeftOpen size={16} />

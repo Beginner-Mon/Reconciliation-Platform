@@ -64,6 +64,15 @@ File gốc vẽ bằng pdf.js (`PdfPages.tsx`) kèm khung chữ OCR (`PageOverla
 Chọn một ô ở bên phải rồi bấm một khung chữ trên file gốc là giá trị của khung
 được điền vào ô; chưa chọn ô thì bấm khung chỉ để xem.
 
+**Chứng từ gốc.** Nhóm có đúng 2 chứng từ thì chứng từ còn lại được so với chứng
+từ gốc. Sidebar gắn nhãn **GỐC** cho chứng từ đó (tooltip cho biết người dùng chọn
+hay hệ thống tự chọn theo vai trò); nút mỏ neo cạnh nút xoá đặt chứng từ kia làm
+gốc (`PUT /projects/{id}/anchor`, đối chiếu lại ngay, không gọi AI). Tab Cảnh báo
+ghi tên chứng từ gốc, thẻ mâu thuẫn gắn nhãn GỐC cho giá trị lấy từ nó. Nhóm 1
+chứng từ hoặc từ 3 chứng từ trở lên không có nhãn và không có nút, vì đối chiếu
+không dùng gốc ở đó. Logic thuần ở `src/anchor.ts`. Khung bên trái gọi là "file
+gốc" để "chứng từ gốc" chỉ mang một nghĩa.
+
 Bấm **Lưu** mới gọi API: server validate lại và tính lại cờ. Lưu **không** chạy
 đối chiếu — kết quả đối chiếu cũ bị đánh dấu là cũ và nút duyệt/từ chối bị khoá
 cho tới khi bấm "Đối chiếu lại". Nút Duyệt còn bị khoá khi chứng từ còn cờ
@@ -118,6 +127,7 @@ src/
   auth.ts       lấy ID token Cognito (Amplify)
   LoginGate.tsx cổng đăng nhập, bắt đổi mật khẩu lần đầu
   format.ts     tiền VND, ngày, nhãn tiếng Việt, màu theo mức nghiêm trọng
+  anchor.ts     chứng từ gốc của từng chứng từ (logic thuần, suy từ lượt đối chiếu)
   hooks/        useProject.ts (poll tiến độ) · useReview.ts (tab Trích xuất & sửa)
   review/       draft.ts (logic thuần của bản nháp) · cache.ts (giữ nháp 90 phút)
   pages/        ProjectList, ProjectDetail

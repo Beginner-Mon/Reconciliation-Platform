@@ -44,32 +44,43 @@ export function DiscrepancyCard({ discrepancy, documents, selectedId, onEdit, on
                   const document = byId.get(value.document_id);
                   // Tô dòng đang hiện ở khung trái để biết đang so tờ nào.
                   const dangXem = value.document_id === selectedId;
+                  const laGoc = value.document_id === discrepancy.anchor_document_id;
                   return (
                     <tr
                       key={value.document_id}
                       className={`border-b border-slate-100 last:border-0 ${dangXem ? "bg-sky-50" : ""}`}
                     >
                       <td className="px-3 py-1.5 text-slate-600">
-                        {document ? (
-                          <button
-                            onClick={() => onView(document)}
-                            title={`Xem ${document.file_name} ở khung bên trái`}
-                            className={`flex items-center gap-1 text-left hover:text-sky-700 hover:underline ${
-                              dangXem ? "font-medium text-sky-800" : ""
-                            }`}
-                          >
-                            {dangXem && <Eye size={12} />}
-                            {value.document_type
-                              ? DOCUMENT_TYPE_LABEL[value.document_type]
-                              : value.document_id}
-                          </button>
-                        ) : (
-                          <>
-                            {value.document_type
-                              ? DOCUMENT_TYPE_LABEL[value.document_type]
-                              : value.document_id}
-                          </>
-                        )}
+                        <span className="flex items-center gap-1.5">
+                          {document ? (
+                            <button
+                              onClick={() => onView(document)}
+                              title={`Xem ${document.file_name} ở khung bên trái`}
+                              className={`flex items-center gap-1 text-left hover:text-sky-700 hover:underline ${
+                                dangXem ? "font-medium text-sky-800" : ""
+                              }`}
+                            >
+                              {dangXem && <Eye size={12} />}
+                              {value.document_type
+                                ? DOCUMENT_TYPE_LABEL[value.document_type]
+                                : value.document_id}
+                            </button>
+                          ) : (
+                            <>
+                              {value.document_type
+                                ? DOCUMENT_TYPE_LABEL[value.document_type]
+                                : value.document_id}
+                            </>
+                          )}
+                          {laGoc && (
+                            <span
+                              title="Chứng từ gốc: giá trị của chứng từ còn lại được so với giá trị này"
+                              className="rounded border border-indigo-300 bg-indigo-50 px-1 py-px text-[10px] font-semibold tracking-wide text-indigo-700"
+                            >
+                              GỐC
+                            </span>
+                          )}
+                        </span>
                       </td>
                       <td className="px-3 py-1.5 text-right font-medium tabular-nums text-slate-900">
                         {formatValue(value.value)}
