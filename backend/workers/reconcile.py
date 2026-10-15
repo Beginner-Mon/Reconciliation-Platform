@@ -1,4 +1,3 @@
-from common.audit import log_pipeline_step
 from common.dynamodb import (
     PROJECTS_TABLE,
     RECONCILIATIONS_TABLE,
@@ -59,17 +58,6 @@ def run_reconciliation(project_id: str) -> dict:
         {"project_id": project_id},
         {"latest_reconciliation_id": reconciliation_id, "updated_at": now_iso()},
     )
-    log_pipeline_step(
-        project_id,
-        "reconcile",
-        "done",
-        {
-            "reconciliation_id": reconciliation_id,
-            "discrepancy_count": result["discrepancy_count"],
-        },
-        source="worker",
-        project_id=project_id,
-    )
     return record
 
 
@@ -103,7 +91,13 @@ def _finish_cancelled_run(project_id: str, run_id: str) -> dict:
     update_item(
         RUNS_TABLE,
         {"run_id": run_id},
-        {"status": "CANCELLED", "finished_at": now_iso()},
+        {
+            "status": "CANCELLED",
+            "finished_at": now_iso(),
+            "finished_document_ids": finished,
+            "not_started_document_ids": not_started,
+            "interrupted_document_ids": interrupted,
+        },
     )
     update_item(
         PROJECTS_TABLE,
@@ -111,19 +105,6 @@ def _finish_cancelled_run(project_id: str, run_id: str) -> dict:
         {"last_run_id": run_id, "updated_at": now_iso()},
     )
     release_processing_run(project_id, run_id)
-    log_pipeline_step(
-        project_id,
-        "run",
-        "cancelled",
-        {
-            "run_id": run_id,
-            "finished": finished,
-            "not_started": not_started,
-            "interrupted": interrupted,
-        },
-        source="worker",
-        project_id=project_id,
-    )
     return {"project_id": project_id, "run_id": run_id, "status": "CANCELLED"}
 
 

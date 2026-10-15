@@ -44,9 +44,9 @@ def engine_gia(monkeypatch):
 
 
 def _ai_calls(capsys) -> list[dict]:
-    from tests.test_audit import audit_events
+    from tests.test_audit import log_events
 
-    return [item["detail"] for item in audit_events(capsys, "AI_CALL")]
+    return [item["detail"] for item in log_events(capsys, "AI_CALL")]
 
 
 def test_ocr_loi_thi_giu_nguyen_nhan_sua_tay(tai_lieu, monkeypatch):

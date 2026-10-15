@@ -22,7 +22,7 @@ def lambda_handler(event: dict, context) -> dict:
     message = _error_text(event.get("error"))
 
     if document_id:
-        fail_step(document_id, step, message, event.get("project_id"))
+        fail_step(document_id, step, message)
 
     return {
         "project_id": event.get("project_id"),

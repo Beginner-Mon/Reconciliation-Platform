@@ -105,8 +105,7 @@ Hiện "ai làm" đang nằm lồng trong `detail` dưới ba tên khác nhau (`
 
 | Action | Ghi khi | Hiện có? |
 |---|---|---|
-| `AI_CALL` | Mỗi lần gọi Document AI/Textract/Gemini — **rule cứng**, ghi cả khi lỗi và 429 | ✅ |
-| `PIPELINE_STEP` | Vào/xong/lỗi từng bước, kèm `attempt` | ✅ |
+| `AI_CALL` | Mỗi lần gọi Document AI/Textract/Gemini — **rule cứng**, ghi cả khi lỗi và 429. **Không** mang `"audit": 1`: nó là nguồn metric EMF (§5), không phải thao tác của người, nên không hiện trong bảng audit | ✅ |
 | `PROCESS_RUN` | Mọi quyết định của `/process`, **kể cả quyết định bỏ qua** | ✅ |
 | `EDIT_OVERWRITTEN` | `force_edited=true` cho AI ghi đè dữ liệu người đã sửa — thao tác phá huỷ duy nhất | ✅ |
 | `REVIEW_EDIT` | Người sửa tay một chứng từ | ✅ |
@@ -123,6 +122,14 @@ Hiện "ai làm" đang nằm lồng trong `detail` dưới ba tên khác nhau (`
 | `DOCUMENT_DELETED` | Xoá một chứng từ khỏi project | ✅ |
 | `ANCHOR_CHANGED` | Đổi chứng từ gốc của project | ✅ |
 | `REQUEST_REJECTED` | Thao tác bị từ chối (400/404/409) ở bất kỳ route nào khác `GET` — ghi tại router (`api/handler.py`), kèm `method`, `path`, `status_code`, `error`. Thiếu nó thì "bấm Xử lý mà không thấy gì" không tra lại được | ✅ |
+
+Chỉ thao tác của **người** mang `"audit": 1`. Vết từng bước của máy
+(`PIPELINE_STEP`) đã bỏ ngày 2026-10-15: một người chạy một lượt mà 9/11 dòng của
+bảng audit là dòng máy không có `actor`, với nhiều người thì không biết dòng nào của
+ai. Thông tin đó đã có ở chỗ khác: lịch sử execution của Step Functions Standard (tên
+execution = `run_id`, có giờ và lỗi từng bước), metric Lambda Errors, `status` và
+`error` trên record document, và danh sách chứng từ xong / chưa chạy / đang dở trên
+record run khi lượt bị dừng.
 
 ## 5. Metric AI (EMF)
 
@@ -158,7 +165,7 @@ Một dashboard tên `{app_name}-{env}` (dev: `recon-dev`), khai bằng Terrafor
 
 | Hàng | Widget | Nguồn |
 |---|---|---|
-| **Audit** | Bảng 100 sự kiện gần nhất: thời gian, `actor`, `action`, `detail.step`, `detail.status`, `project_id`, `entity_id` · đếm theo `action` | Logs Insights |
+| **Audit** | Bảng 100 thao tác gần nhất của người dùng: thời gian, `actor`, `action`, `project_id`, `entity_id`, `detail.run_id` · đếm theo `action` | Logs Insights |
 | **AI** | Chi phí/ngày + **đường ngang $1** · số lần 429 · latency p90 | EMF `Recon/AI` |
 | **Pipeline** | Step Functions Succeeded/Failed · API Gateway 5xx · Latency | Metric có sẵn |
 | **Lỗi** | Lambda Errors theo function · bảng log lỗi gần nhất | Có sẵn + Logs Insights |
@@ -166,10 +173,9 @@ Một dashboard tên `{app_name}-{env}` (dev: `recon-dev`), khai bằng Terrafor
 Query mẫu:
 
 ```sql
--- Nhật ký audit. detail.step chỉ có ở PIPELINE_STEP; detail.status có ở
--- PIPELINE_STEP và AI_CALL. Thiếu hai cột này thì mọi dòng PIPELINE_STEP trông
--- giống hệt nhau.
-fields @timestamp, actor, action, detail.step, detail.status, project_id, entity_id
+-- Nhật ký audit: chỉ thao tác của người. detail.run_id có ở PROCESS_RUN và
+-- PROCESS_STOP_REQUESTED, dùng để mở execution cùng tên trên Step Functions.
+fields @timestamp, actor, action, project_id, entity_id, detail.run_id
 | filter audit = 1 | sort @timestamp desc | limit 100
 
 -- Ai làm gì nhiều nhất
@@ -307,9 +313,9 @@ hiện đúng thứ cần, sẽ **không có nguồn thứ hai** để so. Vì v
 
 1. `terraform apply` (đã chạy; xem dòng trạng thái đầu file).
 2. Chạy một lần `/process` với chứng từ thật.
-3. Logs Insights `filter audit = 1 | sort @timestamp desc`: phải có `PROCESS_RUN`,
-   `PIPELINE_STEP`, `AI_CALL`; `actor` ở sự kiện từ API phải là **tên người đăng
-   nhập**, không phải `null`.
+3. Logs Insights `filter audit = 1 | sort @timestamp desc`: phải có `PROCESS_RUN`, và
+   **mọi** dòng phải có `actor` là tên người đăng nhập, không phải `null`.
+   `filter action = "AI_CALL"` phải ra các lần gọi AI (dòng này không mang nhãn audit).
 4. Metrics → `Recon/AI`: `AiCostUsd`, `AiLatencyMs`, `AiRateLimited` phải có số.
    Không thấy = EMF sai dạng hoặc log bị bọc (§5 và bẫy log format).
 5. Dashboard đủ 4 hàng, không widget nào trống. Widget chi phí dùng `period =

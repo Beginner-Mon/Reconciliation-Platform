@@ -21,7 +21,7 @@ from tests.test_api import (
     mark_processed,
     put_file,
 )
-from tests.test_audit import audit_events
+from tests.test_audit import audit_events, log_events
 
 OCR_GIA = {"text": "3126818 0102721191-068", "pages": [{"page_number": 1, "lines": []}]}
 GEMINI_GIA = {
@@ -115,7 +115,7 @@ def test_ocr_bo_qua_khi_run_da_co_co_dung(su_kien_worker, ocr_gia, capsys):
     doc = _doc(su_kien_worker["document_id"])
     assert doc["status"] == "PENDING"
     assert "step" not in doc
-    assert audit_events(capsys, "AI_CALL") == []
+    assert log_events(capsys, "AI_CALL") == []
 
 
 def test_ocr_van_chay_khi_run_chua_co_co(su_kien_worker, ocr_gia):
@@ -255,16 +255,10 @@ def test_ket_thuc_run_bi_dung_don_dung_tung_loai_chung_tu(aws, capsys):
     assert project["last_run_id"] == run_id
     assert project["latest_reconciliation_id"] == "rec-cu"
 
-    (su_kien,) = [
-        e
-        for e in audit_events(capsys, "PIPELINE_STEP")
-        if e["detail"]["step"] == "run" and e["detail"]["status"] == "cancelled"
-    ]
-    chi_tiet = su_kien["detail"]["detail"]
-    assert chi_tiet["run_id"] == run_id
-    assert sorted(chi_tiet["finished"]) == sorted([da_xong, loi])
-    assert sorted(chi_tiet["not_started"]) == sorted([chay_lai_chua_kip, chua_chay])
-    assert chi_tiet["interrupted"] == [do_dang]
+    # Chứng từ nào xong, chưa chạy, đang dở lúc dừng: ghi trên record run, không ở log.
+    assert sorted(run["finished_document_ids"]) == sorted([da_xong, loi])
+    assert sorted(run["not_started_document_ids"]) == sorted([chay_lai_chua_kip, chua_chay])
+    assert run["interrupted_document_ids"] == [do_dang]
 
 
 def test_dung_sau_khi_moi_chung_tu_da_xong_thi_khong_dong_vao_chung_tu(aws):

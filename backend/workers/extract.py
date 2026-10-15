@@ -24,7 +24,7 @@ def lambda_handler(event: dict, context) -> dict:
     project_id = event["project_id"]
     document_id = event["document_id"]
 
-    begin_step(document_id, "extract", project_id)
+    begin_step(document_id, "extract")
     ocr_json = read_json(event["ocr_s3_key"])
     started = now_ms()
 
@@ -120,6 +120,6 @@ def lambda_handler(event: dict, context) -> dict:
     if data.get("order_reference"):
         updates["order_reference"] = data["order_reference"]
 
-    finish_step(document_id, "extract", project_id, **updates)
+    finish_step(document_id, "extract", **updates)
 
     return {**event, "extraction_s3_key": key, "document_type": document_type}

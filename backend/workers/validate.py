@@ -8,13 +8,10 @@ def lambda_handler(event: dict, context) -> dict:
         return event
 
     document_id = event["document_id"]
-    project_id = event.get("project_id")
 
-    begin_step(document_id, "validate", project_id)
+    begin_step(document_id, "validate")
     document = get_document(document_id)
     data = document.get("extraction") or {}
-    if project_id is None:
-        project_id = document.get("project_id")
 
     result = validate_document(
         data, document.get("format_issues"), document.get("position_issues")
@@ -32,8 +29,8 @@ def lambda_handler(event: dict, context) -> dict:
         from common.dynamodb import update_document
         update_document(document_id, validation=validation)
         errors = result["schema_errors"] + result["rule_errors"]
-        fail_step(document_id, "validate", "; ".join(errors), project_id)
+        fail_step(document_id, "validate", "; ".join(errors))
         return {**event, "status": "FAILED"}
 
-    finish_step(document_id, "validate", project_id, validation=validation)
+    finish_step(document_id, "validate", validation=validation)
     return {**event, "status": "VALIDATED"}

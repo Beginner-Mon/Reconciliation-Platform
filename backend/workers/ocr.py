@@ -58,7 +58,7 @@ def lambda_handler(event: dict, context) -> dict:
     engine = _engine_name(event)
     label = ocr_engines.resolve(engine)["label"]
 
-    begin_step(document_id, "ocr", project_id)
+    begin_step(document_id, "ocr")
     content = read_object(s3_key)
     started = now_ms()
 
@@ -108,8 +108,6 @@ def lambda_handler(event: dict, context) -> dict:
     # Lưu engine vào chính record document: dòng audit có nhãn nhưng xem bằng
     # Logs Insights, nên không lưu ở đây thì giao diện không có cách nào biết
     # chứng từ này đã chạy bằng engine gì.
-    finish_step(
-        document_id, "ocr", project_id, ocr_s3_key=key, page_count=page_count, ocr_engine=engine
-    )
+    finish_step(document_id, "ocr", ocr_s3_key=key, page_count=page_count, ocr_engine=engine)
 
     return {**event, "ocr_s3_key": key, "page_count": page_count}

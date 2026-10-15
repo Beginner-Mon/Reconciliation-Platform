@@ -1,4 +1,3 @@
-from common.audit import log_pipeline_step
 from common.dynamodb import DOCUMENTS_TABLE, RUNS_TABLE, get_item, update_document
 from common.ids import now_iso
 
@@ -25,7 +24,7 @@ def get_document(document_id: str) -> dict:
     return document
 
 
-def begin_step(document_id: str, step: str, project_id: str | None = None) -> int:
+def begin_step(document_id: str, step: str) -> int:
     document = get_document(document_id)
     repeated = document.get("step") == step and document.get("step_status") in {"running", "failed"}
     attempt = (document.get("attempt") or 1) + 1 if repeated else 1
@@ -40,15 +39,10 @@ def begin_step(document_id: str, step: str, project_id: str | None = None) -> in
         attempt=attempt,
         error=None,
     )
-    if project_id is None:
-        project_id = document.get("project_id")
-    log_pipeline_step(
-        document_id, step, "started", {"attempt": attempt}, source="worker", project_id=project_id
-    )
     return attempt
 
 
-def finish_step(document_id: str, step: str, project_id: str | None = None, **updates) -> None:
+def finish_step(document_id: str, step: str, **updates) -> None:
     update_document(
         document_id,
         status=STATUS_AFTER_STEP[step],
@@ -57,12 +51,9 @@ def finish_step(document_id: str, step: str, project_id: str | None = None, **up
         updated_at=now_iso(),
         **updates,
     )
-    if project_id is None and "project_id" in updates:
-        project_id = updates.get("project_id")
-    log_pipeline_step(document_id, step, "done", source="worker", project_id=project_id)
 
 
-def fail_step(document_id: str, step: str, error: str, project_id: str | None = None) -> None:
+def fail_step(document_id: str, step: str, error: str) -> None:
     update_document(
         document_id,
         status="FAILED",
@@ -70,7 +61,4 @@ def fail_step(document_id: str, step: str, error: str, project_id: str | None = 
         step_status="failed",
         updated_at=now_iso(),
         error=error,
-    )
-    log_pipeline_step(
-        document_id, step, "failed", {"error": error}, source="worker", project_id=project_id
     )

@@ -158,7 +158,9 @@ tạo execution thừa (Standard workflow idempotent theo name trong 90 ngày).
 **Status**: `PROCESSING → SUCCEEDED | FAILED | CANCELLED`.
 `cancel_requested_at` / `cancel_requested_by` do `POST /process/stop` ghi; worker
 đọc cờ này để bỏ qua. Run có cờ kết thúc ở `CANCELLED` và không sinh
-reconciliation.
+reconciliation. Khi đó record run có thêm `finished_document_ids` (đã xong hoặc lỗi
+trước lúc dừng), `not_started_document_ids` (chưa tới lượt, đã trả về trạng thái trước
+run) và `interrupted_document_ids` (đang dở, đã trả về `PENDING`).
 
 ## 5. `reconciliations`
 
@@ -195,16 +197,19 @@ Danh sách `discrepancies` đầy đủ nằm ở S3 (`s3_key`), lấy qua
 Mỗi sự kiện là một dòng JSON trên stdout:
 
 ```json
-{"audit": 1, "action": "AI_CALL", "actor": null, "source": "worker",
+{"audit": 1, "action": "REVIEW_EDIT", "actor": "tri", "source": "api",
  "project_id": "prj-...", "entity_id": "doc-2026-0002",
  "timestamp": "2026-08-17T09:01:29Z",
- "detail": {"request_id": "req-8f3a", "model": "gemini-2.5-flash", "status": "ok"}}
+ "detail": {"fields": ["seller"]}}
 ```
+
+Chỉ thao tác của người mang `"audit": 1`. Dòng `AI_CALL` vẫn được in (nguồn metric
+EMF, xem `observability.md` §5) nhưng không mang nhãn này. Vết từng bước của máy
+không ghi: Step Functions Standard đã lưu lịch sử từng bước của mỗi execution.
 
 | Action | Ghi khi |
 |---|---|
-| `AI_CALL` | Mỗi lần gọi Document AI/Textract/Gemini — **rule cứng**, ghi cả khi lỗi và rate limit |
-| `PIPELINE_STEP` | Vào/xong/lỗi từng bước, có `attempt` |
+| `AI_CALL` | Mỗi lần gọi Document AI/Textract/Gemini — **rule cứng**, ghi cả khi lỗi và rate limit; **không** mang `"audit": 1` |
 | `PROCESS_RUN` | Mọi quyết định của `/process`, kể cả quyết định **bỏ qua** |
 | `EDIT_OVERWRITTEN` | `force_edited=true` cho AI ghi đè dữ liệu người đã sửa tay |
 | `REVIEW_EDIT` | Người sửa tay một document |

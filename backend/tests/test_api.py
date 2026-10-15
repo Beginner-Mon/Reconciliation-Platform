@@ -208,7 +208,7 @@ def test_them_doc_moi_chi_xu_ly_doc_moi(aws, started_executions):
 
 
 def test_khong_co_ai_call_moi_cho_doc_da_xu_ly(aws, started_executions, capsys):
-    from tests.test_audit import audit_events
+    from tests.test_audit import log_events
 
     project_id = make_project()
     created = add_documents(project_id, "PO-001.pdf", "INV-001.pdf")
@@ -223,7 +223,7 @@ def test_khong_co_ai_call_moi_cho_doc_da_xu_ly(aws, started_executions, capsys):
 
     da_xu_ly = {created[0]["document_id"], created[1]["document_id"]}
     ai_calls = [
-        item for item in audit_events(capsys, "AI_CALL") if item["entity_id"] in da_xu_ly
+        item for item in log_events(capsys, "AI_CALL") if item["entity_id"] in da_xu_ly
     ]
     assert ai_calls == []
 

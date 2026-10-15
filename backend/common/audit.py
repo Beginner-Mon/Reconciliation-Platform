@@ -4,7 +4,7 @@ import time
 from .ids import new_request_id, now_iso
 
 
-def _log(entity_id, action, detail, *, actor=None, source="api", project_id=None, extra=None):
+def _log(entity_id, action, detail, *, actor=None, source="api", project_id=None, extra=None, audit=True):
     record = {
         "audit": 1,
         "action": action,
@@ -15,6 +15,10 @@ def _log(entity_id, action, detail, *, actor=None, source="api", project_id=None
         "timestamp": now_iso(),
         "detail": detail or {},
     }
+    # Chỉ thao tác của NGƯỜI mang "audit": 1 — bảng audit trên dashboard lọc theo
+    # nhãn này. AI_CALL vẫn in (là nguồn metric EMF) nhưng không mang nhãn.
+    if not audit:
+        del record["audit"]
     if extra:
         record.update(extra)
     try:
@@ -56,6 +60,7 @@ def log_ai_call(
         actor=actor,
         source=source,
         project_id=project_id,
+        audit=False,
         extra={
             "AiCostUsd": cost,
             "AiLatencyMs": latency,
@@ -76,17 +81,6 @@ def log_ai_call(
                 ],
             },
         },
-    )
-
-
-def log_pipeline_step(entity_id, step, status, detail=None, *, actor=None, source="worker", project_id=None):
-    _log(
-        entity_id,
-        "PIPELINE_STEP",
-        {"step": step, "status": status, **({"detail": detail} if detail else {})},
-        actor=actor,
-        source=source,
-        project_id=project_id,
     )
 
 

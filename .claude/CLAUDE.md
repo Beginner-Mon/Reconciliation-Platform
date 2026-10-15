@@ -263,6 +263,14 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   terminal) thì Python đệm theo khối — đo thật trên devserver, không dòng audit
   nào hiện ra cho tới khi bật `PYTHONUNBUFFERED`. Lambda timeout giữa chừng thì
   phần còn trong bộ đệm mất luôn.
+- **Chỉ thao tác của NGƯỜI mang `"audit": 1`.** Vết từng bước của máy
+  (`PIPELINE_STEP`) đã bỏ (2026-10-15): không có `actor`, làm bảng audit trên
+  dashboard không đọc được khi nhiều người, và trùng với lịch sử execution của Step
+  Functions Standard (tên = `run_id`). Lượt bị dừng ghi danh sách chứng từ lên record
+  run. `AI_CALL` VẪN in vì metric chi phí/429/latency bóc từ chính dòng đó (EMF), nhưng
+  không mang nhãn audit. Test tìm `AI_CALL` phải dùng `log_events`, không dùng
+  `audit_events` (sẽ luôn ra `[]` và test "không gọi AI" xanh oan) — `audit_events` đã
+  chặn sẵn.
 - **Amplify deploy thủ công bằng zip**, không nối GitHub (token sẽ nằm trong tfstate local chưa mã hoá). Branch cố định `main`, URL `https://<branch>.<app_id>.amplifyapp.com` cho vào `local.cors_origins`.
 - **Tài khoản xem dashboard là IAM user đăng nhập Console bằng mật khẩu, KHÔNG có
   access key.** Quyền ở `aws_iam_group.dashboard_viewer`; user và mật khẩu tạm tạo
@@ -512,7 +520,7 @@ cd backend;  .venv\Scripts\python.exe -m devserver --upload ..\evaluation\datase
 cd frontend; npm run dev                                      # UI  :5173
 
 # Test backend — PHẢI chạy từ trong backend/ (import cần CWD ở đó)
-cd backend; .venv\Scripts\python.exe -m pytest -q          # 552 test, offline
+cd backend; .venv\Scripts\python.exe -m pytest -q          # 554 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy

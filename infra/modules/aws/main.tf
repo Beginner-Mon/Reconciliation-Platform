@@ -509,7 +509,7 @@ resource "aws_cloudwatch_dashboard" "poc" {
           region = var.aws_region
           title  = "Nhật ký audit — ai làm gì"
           view   = "table"
-          query  = "${local.audit_sources} | fields @timestamp, actor, action, detail.step, detail.status, project_id, entity_id\n| filter audit = 1\n| sort @timestamp desc\n| limit 100"
+          query  = "${local.audit_sources} | fields @timestamp, actor, action, project_id, entity_id, detail.run_id\n| filter audit = 1\n| sort @timestamp desc\n| limit 100"
         }
       },
       {
