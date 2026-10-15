@@ -267,3 +267,62 @@ def test_loai_chung_tu_khong_ho_tro_khong_cuu_duoc():
     assert sach == du_lieu
     assert van_de == []
     assert not ket_qua["valid"]
+
+
+def bang_gia(hang_mau):
+    return [
+        {
+            "columns": [
+                {"header": "SKU", "role": None},
+                {"header": "Ten", "role": "item_name"},
+                {"header": "SL", "role": "quantity"},
+                {"header": "Gia", "role": "unit_price"},
+                {"header": "Tien", "role": "amount"},
+            ],
+            "rows": hang_mau,
+        }
+    ]
+
+
+def test_o_so_dang_chu_co_ky_hieu_tien_duoc_doi_thanh_so():
+    # Đúng dạng Gemini trả cho hoá đơn tiếng Anh trong lượt chạy trên AWS ngày 2026-10-08.
+    du_lieu = {**hoa_don(), "tables": bang_gia([
+        {"SKU": "A-100", "Ten": "Industrial Storage Bin", "SL": "12", "Gia": "$25.00", "Tien": "$300.00"},
+        {"SKU": "B-200", "Ten": "Packing Tape - Heavy Duty", "SL": "5", "Gia": "$42.00", "Tien": "$210.00"},
+    ])}
+    sach, van_de, ket_qua = xem_qua(du_lieu)
+    assert ket_qua["valid"]
+    assert van_de == []
+    assert sach["tables"][0]["rows"] == [
+        {"SKU": "A-100", "Ten": "Industrial Storage Bin", "SL": 12, "Gia": 25, "Tien": 300},
+        {"SKU": "B-200", "Ten": "Packing Tape - Heavy Duty", "SL": 5, "Gia": 42, "Tien": 210},
+    ]
+    assert ket_qua["flags"] == []
+
+
+def test_o_mo_ho_doc_theo_cac_o_khac_cua_chinh_chung_tu():
+    du_lieu = {**hoa_don(), "tables": bang_gia([
+        {"SKU": "1", "Ten": "Menu", "SL": "19", "Gia": "199.000,00", "Tien": "3.781.000"},
+        {"SKU": "2", "Ten": "Khan lanh", "SL": "6", "Gia": "5.000", "Tien": "30.000"},
+    ])}
+    sach, _, _ = xem_qua(du_lieu)
+    assert [d["Gia"] for d in sach["tables"][0]["rows"]] == [199000, 5000]
+    assert [d["Tien"] for d in sach["tables"][0]["rows"]] == [3781000, 30000]
+
+
+def test_o_mo_ho_khong_co_can_cu_thi_de_nguyen_va_bi_gan_co():
+    du_lieu = {**hoa_don(), "tables": bang_gia([
+        {"SKU": "1", "Ten": "Khan lanh", "SL": 6, "Gia": "5.000", "Tien": 30000},
+    ])}
+    sach, _, ket_qua = xem_qua(du_lieu)
+    assert sach["tables"][0]["rows"][0]["Gia"] == "5.000"
+    assert [(f["code"], f["field"]) for f in ket_qua["flags"]] == [("insufficient_data", "tables.0.rows.0.Gia")]
+
+
+def test_cot_khong_phai_cot_so_khong_bi_dong_toi():
+    du_lieu = {**hoa_don(), "tables": bang_gia([
+        {"SKU": "100", "Ten": "12", "SL": 1, "Gia": 5, "Tien": 5},
+    ])}
+    sach, _, _ = xem_qua(du_lieu)
+    assert sach["tables"][0]["rows"][0]["SKU"] == "100"
+    assert sach["tables"][0]["rows"][0]["Ten"] == "12"

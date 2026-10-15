@@ -297,7 +297,8 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 - **Output Gemini được làm sạch ở `workers/extract.py` trước khi lưu**
   (`core/normalize.py:clean_extraction`), bản thô còn nguyên ở
   `extraction_s3_key`. Chỉ gỡ trường vô hướng ở gốc, mỗi mục thành cờ
-  `ai_format`; `other_fields`/ô bảng/khoá lạ chỉ đổi hình dạng, không ghi nhận.
+  `ai_format`; `other_fields`/ô bảng/khoá lạ chỉ đổi hình dạng, không ghi nhận;
+  riêng ô ở cột số được đổi thành số (xem bẫy `core/numbers.py` bên dưới).
   Đường sửa tay (`api/review.py`) không được cứu — người nhập sai kiểu vẫn
   `FAILED`. Quá 10 trường bị gỡ (`MAX_GO`) thì trả nguyên để `FAILED` như cũ.
 - **Đo lỗi định dạng bằng `evaluation/measure_format.py`, không đánh giá bằng
@@ -442,6 +443,14 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
   trường vào một phản hồi, hay đổi một danh sách giá trị (engine, loại chứng từ, trạng thái) thì
   phải khai vào file đó, nếu không test đỏ. Mô tả trong YAML có `: ` phải bọc nháy đơn. Mã 401
   do API Gateway trả nên test offline không tái hiện được.
+- **Ô số trong bảng đọc qua MỘT chỗ: `core/numbers.py:parse_cell`.** `core/normalize.py`
+  đổi ô dạng chữ ở cột `quantity`/`unit_price`/`amount` thành số trước khi lưu;
+  `validate._number` và `compare._extract_items` cũng đọc qua đó. Trước đây `compare.py`
+  gọi `float()` và nuốt lỗi, nên ô `"$42.00"` thành "không có đơn giá" và luật so đơn giá
+  tự bỏ qua mà không cờ nào báo (lượt AWS 2026-10-08 sót lệch 40/42). Ô mơ hồ như
+  `"29.000"` KHÔNG đoán: các ô khác của chứng từ không cho căn cứ thì giữ chữ; ô đơn giá
+  như vậy có cờ `insufficient_data` và nhóm thành `comparison_incomplete`. Đừng gọi
+  `float()`/`Decimal()` thẳng lên ô bảng ở chỗ mới.
 
 ## 6. Thêm loại chứng từ mới
 
@@ -485,7 +494,7 @@ cd backend;  .venv\Scripts\python.exe -m devserver --upload ..\evaluation\datase
 cd frontend; npm run dev                                      # UI  :5173
 
 # Test backend — PHẢI chạy từ trong backend/ (import cần CWD ở đó)
-cd backend; .venv\Scripts\python.exe -m pytest -q          # 459 test, offline
+cd backend; .venv\Scripts\python.exe -m pytest -q          # 542 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy

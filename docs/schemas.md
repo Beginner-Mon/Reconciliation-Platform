@@ -128,6 +128,11 @@ loại: `purchase_order` → `order`, `invoice` → `billing`, `acceptance_recor
 
 - Tiền tệ: **số nguyên** (VND không có phần lẻ); không dùng float cho tiền. Số
   lượng là số thực (m², kg).
+- Ô ở cột `quantity`, `unit_price`, `amount` mà AI trả dạng chữ (`"$42.00"`,
+  `"1.200,50"`, `"12 cái"`) được `core/normalize.py` đổi thành số trước khi lưu,
+  qua `core/numbers.py`. Ô như `"29.000"` (nghìn hay thập phân) đọc theo dấu thập
+  phân mà các ô khác của chính chứng từ cho thấy; không có căn cứ thì giữ nguyên
+  chữ. Validate và các luật đối chiếu cũng đọc số qua `core/numbers.py`.
 - Ngày: ISO 8601 `YYYY-MM-DD`.
 - `currency` ∈ `VND, USD, EUR, JPY, SGD` (`CURRENCIES` trong `purchase_order.py`).
   Ngoài danh sách thì có cờ `currency`, chứng từ không `FAILED`.
@@ -150,7 +155,8 @@ Hai bước. Bước một dựng model `Document`: sai cấu trúc hoặc sai k
 | `amount_sign` | `subtotal`, `total_amount`, `discount_amount`, `tax_amount` | số âm; riêng `subtotal` và `total_amount` thì bằng 0 cũng báo |
 | `insufficient_data` | `tables.T` | bảng thiếu cột `item_name` hoặc `quantity`, hoặc có nhiều cột cùng vai trò |
 | `insufficient_data` | `tables.T.rows.R.<cột số lượng>` | dòng không có số lượng |
-| `quantity` | `tables.T.rows.R.<cột số lượng>` | số lượng không phải số dương |
+| `insufficient_data` | `tables.T.rows.R.<cột đơn giá>` | ô đơn giá có chữ nhưng không đọc chắc được thành số; nhóm chứa chứng từ này thành `comparison_incomplete` |
+| `quantity` | `tables.T.rows.R.<cột số lượng>` | số lượng không phải số dương, hoặc là chữ không đọc chắc được thành số |
 | `incomplete_document` | `tables` | dữ liệu vượt giới hạn và đã rút gọn |
 | `ai_format` | tên trường | AI trả sai định dạng, trường đã bị bỏ trống (`core/normalize.py`) |
 | `vi_tri` | ô trong bảng | số AI chép không khớp vị trí chữ OCR (`core/position.py`) |

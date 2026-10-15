@@ -1,11 +1,13 @@
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 import re
 
 from pydantic import BaseModel, ValidationError
 
 from schemas import CURRENCIES, model_for, supported_types
 from schemas.document import enforce_limits
+
+from .numbers import parse_cell
 
 
 def _migrate_legacy(data: dict) -> dict:
@@ -154,11 +156,8 @@ def validate_document(data, format_issues=None, position_issues=None):
 
 
 def _number(value):
-    try:
-        number = Decimal(str(value))
-        return number if number.is_finite() else None
-    except (InvalidOperation, ValueError, TypeError):
-        return None
+    so = parse_cell(value)
+    return None if so is None else Decimal(str(so))
 
 
 def business_flags(model: BaseModel, incomplete: bool = False) -> list[dict]:
@@ -205,6 +204,12 @@ def business_flags(model: BaseModel, incomplete: bool = False) -> list[dict]:
                 flag("insufficient_data", field, "Dòng này chưa có số lượng nên chưa so được với chứng từ khác", {"quantity": None})
             elif qty is None or qty <= 0:
                 flag("quantity", field, "Cần kiểm tra quantity không phải số dương", {"quantity": so_luong})
+            if "unit_price" in headers:
+                don_gia = row.get(headers["unit_price"])
+                if isinstance(don_gia, str) and don_gia.strip() and parse_cell(don_gia) is None:
+                    flag("insufficient_data", f"tables.{ti}.rows.{ri}.{headers['unit_price']}",
+                         "Ô đơn giá không đọc được thành số nên chưa so được đơn giá với chứng từ khác",
+                         {"unit_price": don_gia})
     if incomplete:
         flag("incomplete_document", "tables", "Dữ liệu vượt giới hạn và đã rút gọn; không kết luận tổng hoặc thiếu/thừa trên bản này")
     return flags

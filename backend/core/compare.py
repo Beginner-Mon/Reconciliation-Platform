@@ -2,6 +2,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from .numbers import parse_cell
 from .rules import Discrepancy, DiscrepancyValue, DocumentRef, label, _fmt
 
 
@@ -43,19 +44,15 @@ def _extract_items(model):
             qty = row.get(h_qty)
             if name is None or qty is None:
                 continue
-            # chuẩn hoá qty/price/amount
-            try:
-                qty_f = float(qty) if qty is not None else 0
-            except Exception:
+            # Đọc số qua core/numbers.py: ô "$42.00" là 42 chứ không phải ô trống.
+            qty_f = parse_cell(qty)
+            if qty_f is None:
                 continue
-            try:
-                price_i = int(float(price)) if (price := row.get(h_price)) is not None else None
-            except Exception:
-                price_i = None
-            try:
-                amount_i = int(float(amount)) if (amount := row.get(h_amount)) is not None else None
-            except Exception:
-                amount_i = None
+            qty_f = float(qty_f)
+            price = parse_cell(row.get(h_price)) if h_price else None
+            price_i = int(price) if price is not None else None
+            amount = parse_cell(row.get(h_amount)) if h_amount else None
+            amount_i = int(amount) if amount is not None else None
             unit = row.get(h_unit) if h_unit else None
             items.append({
                 "table_idx": ti,

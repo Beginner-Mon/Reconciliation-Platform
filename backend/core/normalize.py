@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from schemas.document import COLUMN_ROLES
 
+from .numbers import decimal_mark_of, parse_cell
 from .validate import _LoiDung, _dung_model
 
 MAX_GO = 10
@@ -43,6 +44,37 @@ def _sua_hinh_dang(du_lieu):
                 for i, dong in enumerate(hang):
                     if isinstance(dong, list) and len(dong) == len(tieu_de):
                         hang[i] = dict(zip(tieu_de, dong))
+
+
+COT_SO = ("quantity", "unit_price", "amount")
+
+
+def _so_hoa_o_bang(du_lieu):
+    """Ô ở cột số lượng, đơn giá, thành tiền mà AI trả dạng chữ thì đổi thành số.
+
+    "$42.00" thành 42, "1.200,50" thành 1200.5. Ô như "29.000" đọc theo dấu thập phân
+    mà các ô khác của CHÍNH chứng từ này cho thấy; không có căn cứ thì để nguyên và
+    bước validate gắn cờ. Bản AI trả vẫn còn nguyên trên S3 ở extraction_s3_key.
+    """
+    bang = du_lieu.get("tables")
+    if not isinstance(bang, list):
+        return
+    o = []
+    for b in bang:
+        if not isinstance(b, dict) or not isinstance(b.get("columns"), list) or not isinstance(b.get("rows"), list):
+            continue
+        tieu_de = [
+            c.get("header") for c in b["columns"]
+            if isinstance(c, dict) and c.get("role") in COT_SO and isinstance(c.get("header"), str)
+        ]
+        for dong in b["rows"]:
+            if isinstance(dong, dict):
+                o.extend((dong, h) for h in tieu_de if isinstance(dong.get(h), str))
+    dau = decimal_mark_of(dong[h] for dong, h in o)
+    for dong, h in o:
+        so = parse_cell(dong[h], dau)
+        if so is not None:
+            dong[h] = so
 
 
 def _dinh_vi(du_lieu, loc):
@@ -113,6 +145,7 @@ def clean_extraction(data):
     goc = data
     lam = copy.deepcopy(data)
     _sua_hinh_dang(lam)
+    _so_hoa_o_bang(lam)
     go = []
     for _ in range(VONG_TOI_DA):
         try:

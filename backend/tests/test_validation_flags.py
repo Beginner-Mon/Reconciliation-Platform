@@ -277,3 +277,42 @@ def test_sua_o_bi_canh_bao_thi_chi_co_cua_o_do_mat(aws):
         "tables.0.rows.0.Giá"
     ]
     assert [m["field"] for m in saved["position_issues"]] == ["tables.0.rows.0.Giá"]
+
+
+def test_don_gia_co_ky_hieu_tien_van_duoc_so_voi_chung_tu_goc():
+    """Tái hiện lượt chạy trên AWS ngày 2026-10-08: đơn hàng ghi 40, hoá đơn ghi "$42.00"."""
+    don_hang = document()
+    don_hang.update(document_type="purchase_order", role="order", doc_number="PO-1")
+    don_hang["tables"][0]["rows"] = [{"Tên": "Băng keo", "SL": 5, "Giá": 40, "Tiền": 200}]
+    hoa_don = document()
+    hoa_don.update(order_reference="PO-1")
+    hoa_don["tables"][0]["rows"] = [{"Tên": "Băng keo", "SL": "5", "Giá": "$42.00", "Tiền": "$210.00"}]
+    result = run_crosscheck([{"document_id": "po", "data": don_hang}, {"document_id": "hd", "data": hoa_don}])
+    rule_ids = {d["rule_id"] for d in result["discrepancies"]}
+    assert "line_unit_price_mismatch" in rule_ids
+    assert "comparison_incomplete" not in rule_ids
+
+
+@pytest.mark.parametrize("gia", ["liên hệ", "29.000", "2 x 5"])
+def test_don_gia_khong_doc_duoc_thi_gan_co_va_khong_so_nhom(gia):
+    data = document()
+    data["tables"][0]["rows"][0]["Giá"] = gia
+    result = validate_document(data)
+    assert result["valid"]
+    assert [(f["code"], f["field"]) for f in result["flags"]] == [("insufficient_data", "tables.0.rows.0.Giá")]
+    checked = run_crosscheck([{"document_id": "a", "data": data}, {"document_id": "b", "data": document()}])
+    assert {d["rule_id"] for d in checked["discrepancies"]} == {"comparison_incomplete"}
+
+
+@pytest.mark.parametrize("gia", [None, "", "  ", 570, "570", "$570.00"])
+def test_don_gia_trong_hoac_doc_duoc_thi_khong_gan_co(gia):
+    data = document()
+    data["tables"][0]["rows"][0]["Giá"] = gia
+    assert validate_document(data)["flags"] == []
+
+
+def test_so_luong_mo_ho_khong_bi_doc_thanh_so_sai():
+    data = document()
+    data["tables"][0]["rows"][0]["SL"] = "1.000"
+    result = validate_document(data)
+    assert [(f["code"], f["field"]) for f in result["flags"]] == [("quantity", "tables.0.rows.0.SL")]
