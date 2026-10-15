@@ -366,6 +366,11 @@ infra/       Terraform; modules/aws/statemachine.asl.json là định nghĩa Ste
 - **Shim đối chiếu của dev server và test đi qua `lambda_handler`**, không qua
   `run_reconciliation`, và test thêm một vòng `json.dumps`/`loads`. Sửa
   `devserver/pipeline.py:install` thì phải sửa `tests/conftest.py` cho khớp.
+  Shim vá theo TÊN ĐÃ BIND ở mức module, nên module `api/` nào gọi đối chiếu cũng
+  phải import `invoke_reconcile` ở đầu file và có tên trong CẢ HAI danh sách vá.
+  `api/anchor.py` từng import trong thân hàm: lời gọi rơi vào Lambda thật, lỗi bị
+  nuốt, đổi gốc trả 200 mà không đối chiếu lại. `tests/test_anchor.py` chặn cả hai
+  danh sách.
 
 - **Kết quả OCR có `pages[].words = [[chữ, x0, y0, x1, y1]]`** (toạ độ chuẩn hoá
   0–1) từ cả hai parser. Prompt Gemini KHÔNG đọc `words` (đã có test chặn) — thêm
@@ -500,7 +505,7 @@ cd backend;  .venv\Scripts\python.exe -m devserver --upload ..\evaluation\datase
 cd frontend; npm run dev                                      # UI  :5173
 
 # Test backend — PHẢI chạy từ trong backend/ (import cần CWD ở đó)
-cd backend; .venv\Scripts\python.exe -m pytest -q          # 542 test, offline
+cd backend; .venv\Scripts\python.exe -m pytest -q          # 545 test, offline
 cd backend; .venv\Scripts\python.exe -m pyflakes api common core schemas workers tests devserver
 
 # Terraform: binary nằm ở infra\bin\ (gitignore), KHÔNG cài vào máy

@@ -84,7 +84,7 @@ def doi_chieu_tai_cho(monkeypatch):
             event["run_id"] = run_id
         return json.loads(json.dumps(lambda_handler(event, None)))
 
-    for ten in ("api.reconcile", "api.process", "api.documents"):
+    for ten in ("api.reconcile", "api.process", "api.documents", "api.anchor"):
         module = __import__(ten, fromlist=["invoke_reconcile"])
         if hasattr(module, "invoke_reconcile"):
             monkeypatch.setattr(module, "invoke_reconcile", doi_chieu)

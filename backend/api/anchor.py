@@ -2,6 +2,7 @@ from common.audit import log_review
 from common.dynamodb import DOCUMENTS_TABLE, get_item, update_project
 from common.errors import BadRequest, Conflict, NotFound
 from common.ids import now_iso
+from common.reconcile_client import invoke_reconcile
 
 from .http import json_response
 from .projects import must_get_project
@@ -42,13 +43,13 @@ def set_anchor(params: dict, body: dict, user: str) -> dict:
 
     # Đối chiếu lại đồng bộ (P2), P3 sẽ đổi sang Event
     try:
-        from common.reconcile_client import invoke_reconcile
         record = invoke_reconcile(project_id)
         remaining = query_documents_by_project(project_id)
         reconciliation = reconciliation_view(record, remaining)
         if reconciliation is None:
             reconciliation = record
-    except Exception:
+    except Exception as err:
+        print(f"Đã đổi gốc nhưng đối chiếu lại lỗi: {err!r}", flush=True)
         reconciliation = None
 
     return json_response({"project_id": project_id, "anchor_document_ids": anchor_ids, "reconciliation": reconciliation})

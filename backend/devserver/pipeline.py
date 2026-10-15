@@ -213,6 +213,7 @@ def install() -> dict:
     # Vá theo TÊN ĐÃ BIND trong từng module gọi, không vá `common.reconcile_client`
     # — các module dùng `from ... import invoke_reconcile` nên mỗi module giữ một
     # tham chiếu riêng.
+    import api.anchor as anchor_module
     import api.documents as documents_module
     import api.reconcile as reconcile_module
 
@@ -222,7 +223,7 @@ def install() -> dict:
             event["run_id"] = run_id
         return workers.reconcile.lambda_handler(event, None)
 
-    for module in (reconcile_module, process_module, documents_module):
+    for module in (reconcile_module, process_module, documents_module, anchor_module):
         module.invoke_reconcile = invoke_reconcile
 
     return plan
